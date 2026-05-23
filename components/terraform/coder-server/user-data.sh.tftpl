@@ -1,0 +1,44 @@
+#!/bin/bash
+set -euo pipefail
+
+apt-get update -y
+apt-get install -y docker.io docker-compose-plugin
+
+systemctl enable --now docker
+
+mkdir -p /opt/coder
+cat > /opt/coder/docker-compose.yml <<COMPOSE
+services:
+  coder:
+    image: ghcr.io/coder/coder:${coder_version}
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      CODER_PG_CONNECTION_URL: "postgresql://coder:${postgres_password}@postgres/coder?sslmode=disable"
+      CODER_HTTP_ADDRESS: "0.0.0.0:3000"
+      CODER_ACCESS_URL: "${access_url}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: coder
+      POSTGRES_PASSWORD: ${postgres_password}
+      POSTGRES_DB: coder
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coder"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
+COMPOSE
+
+docker compose -f /opt/coder/docker-compose.yml up -d
