@@ -1,0 +1,7 @@
+components:
+  terraform:
+    coder-server:
+      vars:
+        server_type: cx22
+        location: ash
+        coder_version: "latest"

@@ -1,0 +1,11 @@
+import:
+  - catalog/coder-server
+
+vars:
+  stage: dev
+
+components:
+  terraform:
+    coder-server:
+      vars:
+        server_type: cx22
