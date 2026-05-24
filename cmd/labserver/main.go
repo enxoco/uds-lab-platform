@@ -1,18 +1,21 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
-	"path/filepath"
+	"strings"
 	"strconv"
 	"text/template"
 	"time"
 
+	labplatform "github.com/defenseunicorns/uds-lab-platform"
 	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
 	"github.com/defenseunicorns/uds-lab-platform/internal/proxy"
 	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
@@ -20,21 +23,66 @@ import (
 )
 
 type server struct {
-	mgr          *session.Manager
-	scenariosDir string
+	mgr         *session.Manager
+	scenariosFS fs.FS
 }
 
 func main() {
-	hcloudToken := requireEnv("HCLOUD_TOKEN")
-	scenariosDir := envOr("SCENARIOS_DIR", "scenarios")
+	hcloudToken := os.Getenv("HCLOUD_TOKEN")
+	if hcloudToken == "" {
+		fmt.Print("Hetzner API token: ")
+		scanner := bufio.NewScanner(os.Stdin)
+		if scanner.Scan() {
+			hcloudToken = strings.TrimSpace(scanner.Text())
+		}
+		if hcloudToken == "" {
+			log.Fatal("HCLOUD_TOKEN is required")
+		}
+	}
+
 	ttlMinutes, _ := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
 	serverType := envOr("VM_SERVER_TYPE", "ccx13")
 	location := envOr("VM_LOCATION", "hil")
 	port := envOr("PORT", "8080")
 
-	udTmpl, err := template.ParseFiles(filepath.Join("vm", "user-data.sh.gotmpl"))
+	// Scenarios FS: OS override for development, embedded otherwise
+	var scenariosFS fs.FS
+	if dir := os.Getenv("SCENARIOS_DIR"); dir != "" {
+		scenariosFS = os.DirFS(dir)
+		log.Printf("using scenarios from %s", dir)
+	} else {
+		sub, err := fs.Sub(labplatform.ScenariosFS, "scenarios")
+		if err != nil {
+			log.Fatalf("embedded scenarios: %v", err)
+		}
+		scenariosFS = sub
+	}
+
+	// Static files FS: OS override for development
+	var staticFS fs.FS
+	if dir := os.Getenv("STATIC_DIR"); dir != "" {
+		staticFS = os.DirFS(dir)
+		log.Printf("using static files from %s", dir)
+	} else {
+		sub, err := fs.Sub(labplatform.StaticFiles, "web/static")
+		if err != nil {
+			log.Fatalf("embedded static: %v", err)
+		}
+		staticFS = sub
+	}
+
+	// VM user-data template: embedded
+	vmFS, err := fs.Sub(labplatform.VMFiles, "vm")
+	if err != nil {
+		log.Fatalf("embedded vm: %v", err)
+	}
+	tmplData, err := fs.ReadFile(vmFS, "user-data.sh.gotmpl")
 	if err != nil {
 		log.Fatalf("load user-data template: %v", err)
+	}
+	udTmpl, err := template.New("user-data.sh.gotmpl").Parse(string(tmplData))
+	if err != nil {
+		log.Fatalf("parse user-data template: %v", err)
 	}
 
 	mgr := session.NewManager(
@@ -45,11 +93,11 @@ func main() {
 			Location:     location,
 			SSHKeyNames:  []string{"local"},
 			UserDataTmpl: udTmpl,
-			ScenariosDir: scenariosDir,
+			ScenariosFS:  scenariosFS,
 		},
 	)
 
-	srv := &server{mgr: mgr, scenariosDir: scenariosDir}
+	srv := &server{mgr: mgr, scenariosFS: scenariosFS}
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
@@ -61,14 +109,14 @@ func main() {
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
-	mux.Handle("/", http.FileServer(http.Dir("web/static")))
+	mux.Handle("/", http.FileServerFS(staticFS))
 
 	log.Printf("labserver listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
 func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
-	summaries, err := scenario.ListSummaries(s.scenariosDir)
+	summaries, err := scenario.ListSummaries(s.scenariosFS)
 	if err != nil {
 		jsonError(w, "cannot read scenarios", http.StatusInternalServerError)
 		return
@@ -77,7 +125,7 @@ func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) getScenario(w http.ResponseWriter, r *http.Request) {
-	sc, err := scenario.Load(s.scenariosDir, r.PathValue("id"))
+	sc, err := scenario.Load(s.scenariosFS, r.PathValue("id"))
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
@@ -210,14 +258,6 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
-}
-
-func requireEnv(key string) string {
-	v := os.Getenv(key)
-	if v == "" {
-		log.Fatalf("required env var %s not set", key)
-	}
-	return v
 }
 
 func envOr(key, def string) string {

@@ -4,9 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io/fs"
 	"net/http"
-	"os"
-	"path/filepath"
 	"sync"
 	"text/template"
 	"time"
@@ -20,7 +19,7 @@ type VMConfig struct {
 	Location     string
 	SSHKeyNames  []string
 	UserDataTmpl *template.Template
-	ScenariosDir string
+	ScenariosFS  fs.FS
 }
 
 type Manager struct {
@@ -48,19 +47,18 @@ type userDataInput struct {
 }
 
 func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error) {
-	setupSh, err := os.ReadFile(filepath.Join(m.vmCfg.ScenariosDir, scenario, "setup.sh"))
+	setupSh, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/setup.sh")
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
 	}
 
 	verifyScripts := map[string]string{}
-	verifyDir := filepath.Join(m.vmCfg.ScenariosDir, scenario, "verify")
-	if entries, err := os.ReadDir(verifyDir); err == nil {
+	if entries, err := fs.ReadDir(m.vmCfg.ScenariosFS, scenario+"/verify"); err == nil {
 		for _, e := range entries {
 			if e.IsDir() {
 				continue
 			}
-			content, err := os.ReadFile(filepath.Join(verifyDir, e.Name()))
+			content, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/verify/"+e.Name())
 			if err == nil {
 				verifyScripts[e.Name()] = string(content)
 			}

@@ -2,8 +2,7 @@ package scenario
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io/fs"
 
 	"gopkg.in/yaml.v3"
 )
@@ -34,10 +33,8 @@ type Summary struct {
 	Difficulty  string `json:"difficulty"`
 }
 
-func Load(scenariosDir, id string) (*Scenario, error) {
-	base := filepath.Join(scenariosDir, id)
-
-	data, err := os.ReadFile(filepath.Join(base, "scenario.yaml"))
+func Load(fsys fs.FS, id string) (*Scenario, error) {
+	data, err := fs.ReadFile(fsys, id+"/scenario.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", id, err)
 	}
@@ -49,7 +46,7 @@ func Load(scenariosDir, id string) (*Scenario, error) {
 	s.ID = id
 
 	for i, step := range s.Steps {
-		content, err := os.ReadFile(filepath.Join(base, step.Text))
+		content, err := fs.ReadFile(fsys, id+"/"+step.Text)
 		if err != nil {
 			return nil, fmt.Errorf("step %d text file %q: %w", i+1, step.Text, err)
 		}
@@ -60,8 +57,8 @@ func Load(scenariosDir, id string) (*Scenario, error) {
 	return &s, nil
 }
 
-func ListSummaries(scenariosDir string) ([]Summary, error) {
-	entries, err := os.ReadDir(scenariosDir)
+func ListSummaries(fsys fs.FS) ([]Summary, error) {
+	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +68,7 @@ func ListSummaries(scenariosDir string) ([]Summary, error) {
 		if !e.IsDir() {
 			continue
 		}
-		s, err := Load(scenariosDir, e.Name())
+		s, err := Load(fsys, e.Name())
 		if err != nil {
 			continue
 		}
