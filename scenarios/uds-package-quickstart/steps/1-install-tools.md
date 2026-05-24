@@ -49,7 +49,7 @@ k3d version
 UDS CLI wraps Zarf and adds UDS-specific bundle and deploy commands.
 
 ```
-UDS_TAG=$(curl -s https://api.github.com/repos/defenseunicorns/uds-cli/releases/latest | grep '"tag_name"' | cut -d'"' -f4) && curl -sSL "https://github.com/defenseunicorns/uds-cli/releases/download/${UDS_TAG}/uds-cli_${UDS_TAG#v}_Linux_amd64" -o /usr/local/bin/uds && chmod +x /usr/local/bin/uds
+UDS_TAG=$(curl -s https://api.github.com/repos/defenseunicorns/uds-cli/releases/latest | grep '"tag_name"' | cut -d'"' -f4) && curl -sSL "https://github.com/defenseunicorns/uds-cli/releases/download/${UDS_TAG}/uds-cli_${UDS_TAG}_Linux_amd64" -o /usr/local/bin/uds && chmod +x /usr/local/bin/uds
 ```
 
 ```
