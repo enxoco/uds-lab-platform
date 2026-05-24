@@ -1,0 +1,160 @@
+package session
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sync"
+	"text/template"
+	"time"
+
+	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
+	"github.com/google/uuid"
+)
+
+type VMConfig struct {
+	ServerType   string
+	Location     string
+	SSHKeyNames  []string
+	UserDataTmpl *template.Template
+	ScenariosDir string
+}
+
+type Manager struct {
+	mu       sync.RWMutex
+	sessions map[string]*Session
+	hcloud   *hetzner.Client
+	ttl      time.Duration
+	vmCfg    VMConfig
+}
+
+func NewManager(hcloud *hetzner.Client, ttl time.Duration, vmCfg VMConfig) *Manager {
+	m := &Manager{
+		sessions: make(map[string]*Session),
+		hcloud:   hcloud,
+		ttl:      ttl,
+		vmCfg:    vmCfg,
+	}
+	go m.cleanupLoop()
+	return m
+}
+
+func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error) {
+	setupSh, err := os.ReadFile(filepath.Join(m.vmCfg.ScenariosDir, scenario, "setup.sh"))
+	if err != nil {
+		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
+	}
+
+	var userData bytes.Buffer
+	if err := m.vmCfg.UserDataTmpl.Execute(&userData, map[string]string{
+		"SetupSh": string(setupSh),
+	}); err != nil {
+		return nil, fmt.Errorf("render user-data: %w", err)
+	}
+
+	id := uuid.New().String()
+	now := time.Now()
+
+	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
+		Name:       "lab-" + id[:8],
+		ServerType: m.vmCfg.ServerType,
+		Image:      "ubuntu-24.04",
+		Location:   m.vmCfg.Location,
+		UserData:   userData.String(),
+		SSHKeys:    m.vmCfg.SSHKeyNames,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create VM: %w", err)
+	}
+
+	s := &Session{
+		ID:        id,
+		Scenario:  scenario,
+		VMID:      vmID,
+		VMIP:      vmIP,
+		Status:    StatusProvisioning,
+		CreatedAt: now,
+		ExpiresAt: now.Add(m.ttl),
+	}
+
+	m.mu.Lock()
+	m.sessions[id] = s
+	m.mu.Unlock()
+
+	go m.pollReady(s)
+	return s, nil
+}
+
+func (m *Manager) Get(id string) (*Session, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	s, ok := m.sessions[id]
+	return s, ok
+}
+
+func (m *Manager) Delete(ctx context.Context, id string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[id]
+	if ok {
+		delete(m.sessions, id)
+	}
+	m.mu.Unlock()
+
+	if !ok {
+		return fmt.Errorf("session %q not found", id)
+	}
+	return m.hcloud.DeleteServer(ctx, s.VMID)
+}
+
+// pollReady polls ttyd on the VM until it responds, then marks the session ready.
+func (m *Manager) pollReady(s *Session) {
+	url := fmt.Sprintf("http://%s:7681/", s.VMIP)
+	client := &http.Client{Timeout: 3 * time.Second}
+
+	for {
+		time.Sleep(5 * time.Second)
+
+		m.mu.RLock()
+		_, alive := m.sessions[s.ID]
+		m.mu.RUnlock()
+		if !alive {
+			return
+		}
+
+		resp, err := client.Get(url)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode == http.StatusOK {
+				m.mu.Lock()
+				if sess, ok := m.sessions[s.ID]; ok {
+					sess.Status = StatusReady
+				}
+				m.mu.Unlock()
+				return
+			}
+		}
+	}
+}
+
+func (m *Manager) cleanupLoop() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		m.mu.Lock()
+		expired := []*Session{}
+		for _, s := range m.sessions {
+			if time.Now().After(s.ExpiresAt) {
+				expired = append(expired, s)
+				delete(m.sessions, s.ID)
+			}
+		}
+		m.mu.Unlock()
+
+		for _, s := range expired {
+			_ = m.hcloud.DeleteServer(context.Background(), s.VMID)
+		}
+	}
+}
