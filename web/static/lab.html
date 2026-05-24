@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDS Labs</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+  <nav>
+    <a class="logo" href="/">UDS Labs</a>
+    <span id="scenario-title" style="color:var(--text-muted);font-size:13px;"></span>
+    <span style="flex:1"></span>
+    <span class="timer" id="timer">60:00</span>
+    <button class="btn btn-danger" id="end-btn" onclick="endLab()">End Lab</button>
+  </nav>
+
+  <div class="lab-layout">
+    <!-- Instructions -->
+    <div class="instructions-panel">
+      <div class="instructions-header">
+        <span class="title" id="step-title">Loading…</span>
+        <div class="step-nav">
+          <span id="step-counter"></span>
+        </div>
+      </div>
+      <div class="instructions-body" id="instructions-body"></div>
+      <div class="instructions-footer">
+        <button class="btn btn-ghost" id="prev-btn" onclick="prevStep()">← Prev</button>
+        <div class="step-dots" id="step-dots"></div>
+        <button class="btn btn-primary" id="next-btn" onclick="nextStep()">Next →</button>
+      </div>
+    </div>
+
+    <!-- Terminal -->
+    <div class="terminal-panel">
+      <div class="terminal-header">
+        <span style="font-size:12px;color:var(--text-muted);" id="terminal-status">Provisioning VM…</span>
+      </div>
+      <div class="terminal-frame">
+        <div class="loading-overlay" id="loading">
+          <div class="spinner"></div>
+          <div class="loading-text" id="loading-text">Provisioning lab environment…</div>
+        </div>
+        <iframe id="terminal" src="about:blank" title="Terminal"></iframe>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const params  = new URLSearchParams(location.search);
+    const SESSION = params.get('session');
+    const SCENARIO = params.get('scenario');
+
+    let steps = [];
+    let currentStep = 0;
+    let expiresAt = null;
+    let timerInterval = null;
+    let pollInterval = null;
+
+    // ── Init ────────────────────────────────────────────────────────────────
+    async function init() {
+      if (!SESSION || !SCENARIO) { location.href = '/'; return; }
+
+      const sc = await fetch(`/api/scenarios/${SCENARIO}`).then(r => r.json());
+      document.getElementById('scenario-title').textContent = sc.title || SCENARIO;
+      steps = sc.steps || [];
+      renderDots();
+      showStep(0);
+      pollSession();
+    }
+
+    // ── Session polling ─────────────────────────────────────────────────────
+    async function pollSession() {
+      pollInterval = setInterval(async () => {
+        const sess = await fetch(`/api/sessions/${SESSION}`).then(r => r.json());
+
+        if (sess.error) { clearInterval(pollInterval); return; }
+
+        if (!expiresAt) {
+          expiresAt = new Date(sess.expires_at);
+          startTimer();
+        }
+
+        if (sess.status === 'ready') {
+          clearInterval(pollInterval);
+          document.getElementById('loading').classList.add('hidden');
+          document.getElementById('terminal-status').textContent = 'Connected';
+          document.getElementById('terminal').src = `/t/${SESSION}/`;
+        } else if (sess.status === 'provisioning') {
+          document.getElementById('loading-text').textContent =
+            'Provisioning lab environment… (this takes ~60–90 seconds)';
+        }
+      }, 4000);
+    }
+
+    // ── Timer ───────────────────────────────────────────────────────────────
+    function startTimer() {
+      timerInterval = setInterval(() => {
+        const remaining = Math.max(0, expiresAt - Date.now());
+        const m = Math.floor(remaining / 60000);
+        const s = Math.floor((remaining % 60000) / 1000);
+        const el = document.getElementById('timer');
+        el.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+        el.className = 'timer' + (m < 5 ? ' danger' : m < 15 ? ' warn' : '');
+        if (remaining === 0) { clearInterval(timerInterval); endLab(); }
+      }, 1000);
+    }
+
+    // ── Steps ───────────────────────────────────────────────────────────────
+    function showStep(n) {
+      currentStep = Math.max(0, Math.min(n, steps.length - 1));
+      const step = steps[currentStep];
+      document.getElementById('step-title').textContent = step.title;
+      document.getElementById('step-counter').textContent =
+        `Step ${currentStep + 1} of ${steps.length}`;
+      document.getElementById('instructions-body').innerHTML =
+        marked.parse(step.content || '');
+      document.getElementById('prev-btn').disabled = currentStep === 0;
+      document.getElementById('next-btn').textContent =
+        currentStep === steps.length - 1 ? 'Finish' : 'Next →';
+      updateDots();
+      bindCodeBlocks();
+    }
+
+    function prevStep() { showStep(currentStep - 1); }
+    function nextStep() {
+      if (currentStep === steps.length - 1) { endLab(); return; }
+      showStep(currentStep + 1);
+    }
+
+    // ── Step dots ───────────────────────────────────────────────────────────
+    function renderDots() {
+      const container = document.getElementById('step-dots');
+      container.innerHTML = '';
+      steps.forEach((_, i) => {
+        const dot = document.createElement('div');
+        dot.className = 'step-dot';
+        dot.onclick = () => showStep(i);
+        container.appendChild(dot);
+      });
+    }
+
+    function updateDots() {
+      document.querySelectorAll('.step-dot').forEach((dot, i) => {
+        dot.className = 'step-dot' +
+          (i === currentStep ? ' active' : i < currentStep ? ' done' : '');
+      });
+    }
+
+    // ── Click-to-run code blocks ─────────────────────────────────────────────
+    function bindCodeBlocks() {
+      document.querySelectorAll('#instructions-body pre').forEach(pre => {
+        pre.onclick = () => {
+          const term = document.getElementById('terminal');
+          if (!term.contentWindow) return;
+          const code = pre.querySelector('code')?.textContent || pre.textContent;
+          // Send keystrokes to ttyd via postMessage (ttyd supports this)
+          term.contentWindow.postMessage({ type: 'input', data: code.trimEnd() + '\n' }, '*');
+        };
+      });
+    }
+
+    // ── End lab ─────────────────────────────────────────────────────────────
+    async function endLab() {
+      clearInterval(timerInterval);
+      clearInterval(pollInterval);
+      await fetch(`/api/sessions/${SESSION}`, { method: 'DELETE' }).catch(() => {});
+      location.href = '/';
+    }
+
+    init();
+  </script>
+</body>
+</html>

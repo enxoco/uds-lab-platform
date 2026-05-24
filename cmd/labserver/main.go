@@ -8,12 +8,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"text/template"
 	"time"
 
 	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
 	"github.com/defenseunicorns/uds-lab-platform/internal/proxy"
+	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
 	"github.com/defenseunicorns/uds-lab-platform/internal/session"
 )
 
@@ -48,23 +48,36 @@ func main() {
 	)
 
 	srv := &server{mgr: mgr, scenariosDir: scenariosDir}
-
 	mux := http.NewServeMux()
 
-	// API
+	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
+	mux.HandleFunc("GET /api/scenarios/{id}", srv.getScenario)
 	mux.HandleFunc("POST /api/sessions", srv.createSession)
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
-	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
-
-	// Terminal proxy: /t/{sessionID}/* → VM ttyd
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
-
-	// Static frontend
 	mux.Handle("/", http.FileServer(http.Dir("web/static")))
 
 	log.Printf("labserver listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
+	summaries, err := scenario.ListSummaries(s.scenariosDir)
+	if err != nil {
+		jsonError(w, "cannot read scenarios", http.StatusInternalServerError)
+		return
+	}
+	jsonOK(w, summaries)
+}
+
+func (s *server) getScenario(w http.ResponseWriter, r *http.Request) {
+	sc, err := scenario.Load(s.scenariosDir, r.PathValue("id"))
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	jsonOK(w, sc)
 }
 
 func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
@@ -94,8 +107,7 @@ func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(sess)
+	jsonOK(w, sess)
 }
 
 func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
@@ -104,40 +116,6 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
-	entries, err := os.ReadDir(s.scenariosDir)
-	if err != nil {
-		jsonError(w, "cannot read scenarios", http.StatusInternalServerError)
-		return
-	}
-
-	type ScenarioMeta struct {
-		ID    string `json:"id"`
-		Title string `json:"title,omitempty"`
-	}
-
-	out := []ScenarioMeta{}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		meta := ScenarioMeta{ID: e.Name()}
-		// Try to read title from scenario.yaml (simple grep, no YAML lib dep)
-		if b, err := os.ReadFile(filepath.Join(s.scenariosDir, e.Name(), "scenario.yaml")); err == nil {
-			for _, line := range splitLines(string(b)) {
-				if len(line) > 7 && line[:6] == "title:" {
-					meta.Title = trimQuotes(line[7:])
-					break
-				}
-			}
-		}
-		out = append(out, meta)
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
@@ -151,10 +129,13 @@ func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-
 	stripPrefix := fmt.Sprintf("/t/%s", id)
-	target := fmt.Sprintf("http://%s:7681", sess.VMIP)
-	proxy.Handler(target, stripPrefix).ServeHTTP(w, r)
+	proxy.Handler(fmt.Sprintf("http://%s:7681", sess.VMIP), stripPrefix).ServeHTTP(w, r)
+}
+
+func jsonOK(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(v)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
@@ -176,24 +157,4 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
-}
-
-func splitLines(s string) []string {
-	var lines []string
-	start := 0
-	for i, c := range s {
-		if c == '\n' {
-			lines = append(lines, s[start:i])
-			start = i + 1
-		}
-	}
-	return append(lines, s[start:])
-}
-
-func trimQuotes(s string) string {
-	s = strings.TrimSpace(s)
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		return s[1 : len(s)-1]
-	}
-	return s
 }
