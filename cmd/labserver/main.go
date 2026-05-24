@@ -43,6 +43,7 @@ func main() {
 	ttlMinutes, _ := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
 	serverType := envOr("VM_SERVER_TYPE", "ccx13")
 	location := envOr("VM_LOCATION", "hil")
+	vmImage := envOr("VM_IMAGE", "ubuntu-24.04")
 	port := envOr("PORT", "8080")
 
 	// Scenarios FS: OS override for development, embedded otherwise
@@ -91,6 +92,7 @@ func main() {
 		session.VMConfig{
 			ServerType:   serverType,
 			Location:     location,
+			Image:        vmImage,
 			SSHKeyNames:  []string{"local"},
 			UserDataTmpl: udTmpl,
 			ScenariosFS:  scenariosFS,

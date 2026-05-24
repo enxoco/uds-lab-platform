@@ -18,6 +18,7 @@ import (
 type VMConfig struct {
 	ServerType   string
 	Location     string
+	Image        string
 	SSHKeyNames  []string
 	UserDataTmpl *template.Template
 	ScenariosFS  fs.FS
@@ -93,7 +94,7 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
 		Name:       "lab-" + id[:8],
 		ServerType: m.vmCfg.ServerType,
-		Image:      "ubuntu-24.04",
+		Image:      m.vmCfg.Image,
 		Location:   m.vmCfg.Location,
 		UserData:   userData.String(),
 		SSHKeys:    m.vmCfg.SSHKeyNames,
