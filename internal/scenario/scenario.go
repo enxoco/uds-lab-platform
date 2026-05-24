@@ -23,6 +23,7 @@ type Scenario struct {
 	Difficulty  string   `yaml:"difficulty"   json:"difficulty"`
 	Tags        []string `yaml:"tags"         json:"tags"`
 	Steps       []Step   `yaml:"steps"        json:"steps"`
+	Browser     bool     `yaml:"browser"      json:"browser"`
 }
 
 type Summary struct {

@@ -80,6 +80,98 @@ chmod +x "$SCENARIO_DIR/verify/{{$name}}"
 log "Running scenario setup in background..."
 nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
 
+{{if .BrowserEnabled}}
+# ── Browser environment (background) ──────────────────────────────────────────
+log "Starting browser environment setup in background..."
+cat > /opt/browser-setup.sh << 'BROWSER_EOF'
+#!/bin/bash
+set -euo pipefail
+BLOG=/var/log/lab-setup/browser-setup.log
+log() { echo "[$(date '+%H:%M:%S')] [browser] $*" | tee -a "$BLOG"; }
+
+log "Installing Xvfb, x11vnc, noVNC, Chromium..."
+apt-get install -y -q xvfb x11vnc novnc chromium-browser
+
+log "Creating systemd services..."
+
+cat > /etc/systemd/system/lab-xvfb.service << 'EOF'
+[Unit]
+Description=Virtual framebuffer
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x800x24 -ac
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/lab-x11vnc.service << 'EOF'
+[Unit]
+Description=VNC server on virtual display
+After=lab-xvfb.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/x11vnc -display :99 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -noxrecord -noxfixes -noxdamage
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/lab-novnc.service << 'EOF'
+[Unit]
+Description=noVNC WebSocket bridge
+After=lab-x11vnc.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/websockify --web=/usr/share/novnc 6080 127.0.0.1:5900
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/lab-browser.service << 'EOF'
+[Unit]
+Description=Chromium in virtual display
+After=lab-xvfb.service
+
+[Service]
+Type=simple
+Environment=DISPLAY=:99
+Environment=HOME=/root
+ExecStart=/usr/bin/chromium-browser \
+  --no-sandbox \
+  --disable-gpu \
+  --disable-dev-shm-usage \
+  --no-first-run \
+  --window-size=1280,800 \
+  --start-maximized \
+  about:blank
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now lab-xvfb lab-x11vnc lab-novnc lab-browser
+log "Browser environment ready."
+touch /var/log/lab-setup/browser-ready
+BROWSER_EOF
+chmod +x /opt/browser-setup.sh
+nohup bash /opt/browser-setup.sh >> /var/log/lab-setup/bootstrap.log 2>&1 &
+{{end}}
+
 # ── Shell config ──────────────────────────────────────────────────────────────
 cat >> /root/.bashrc << 'EOF'
 alias kubectl="uds zarf tools kubectl"

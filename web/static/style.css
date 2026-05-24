@@ -343,6 +343,24 @@ nav .logo {
 .tab-add:hover:not(:disabled) { background: #21262d; color: var(--text); }
 .tab-add:disabled { opacity: 0.3; cursor: default; }
 
+.btn-browser {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  height: 37px;
+  background: transparent;
+  border: none;
+  border-left: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--font);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.1s, color 0.1s;
+}
+.btn-browser:hover { background: #21262d; color: var(--accent); }
+
 .timer {
   font-family: var(--mono);
   font-size: 13px;

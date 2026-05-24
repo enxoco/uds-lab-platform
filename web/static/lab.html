@@ -60,6 +60,7 @@
         <div class="tab-bar" id="tab-bar"></div>
         <button class="tab-add" id="tab-add" onclick="addTab()" title="New terminal" disabled>+</button>
         <span style="flex:1"></span>
+        <button class="btn-browser" id="browser-btn" onclick="openBrowser()" style="display:none;" title="Open browser preview">⬡ Browser</button>
         <span style="font-size:12px;color:var(--text-muted);" id="terminal-status">Provisioning VM…</span>
       </div>
       <div class="terminal-frame" id="terminal-frame">
@@ -164,6 +165,9 @@
           document.getElementById('loading').classList.add('hidden');
           document.getElementById('terminal-status').textContent = 'Connected';
           document.getElementById('tab-add').disabled = false;
+          if (sess.browser_enabled) {
+            document.getElementById('browser-btn').style.display = 'inline-flex';
+          }
           showStep(currentStep); // re-render to enable nav buttons
           addTab(); // open first tab
         } else {
@@ -234,6 +238,11 @@
       nextBtn.textContent = currentStep === steps.length - 1 ? 'Finish' : 'Next →';
       updateDots();
       bindCodeBlocks();
+    }
+
+    // ── Browser preview ─────────────────────────────────────────────────────
+    function openBrowser() {
+      window.open(`/vnc/${SESSION}/`, '_blank');
     }
 
     // ── Step verification ───────────────────────────────────────────────────

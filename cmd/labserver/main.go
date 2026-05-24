@@ -109,6 +109,7 @@ func main() {
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
+	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
 	mux.Handle("/", http.FileServerFS(staticFS))
 
 	log.Printf("labserver listening on :%s", port)
@@ -225,6 +226,24 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	w.WriteHeader(resp.StatusCode)
+}
+
+func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !sess.BrowserEnabled {
+		http.Error(w, "browser not available for this scenario", http.StatusNotFound)
+		return
+	}
+	if sess.Status != session.StatusReady {
+		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
+		return
+	}
+	proxy.Handler(fmt.Sprintf("http://%s:6080", sess.VMIP), fmt.Sprintf("/vnc/%s", id)).ServeHTTP(w, r)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 )
 
 type VMConfig struct {
@@ -42,14 +43,26 @@ func NewManager(hcloud *hetzner.Client, ttl time.Duration, vmCfg VMConfig) *Mana
 }
 
 type userDataInput struct {
-	SetupSh       string
-	VerifyScripts map[string]string
+	SetupSh        string
+	VerifyScripts  map[string]string
+	BrowserEnabled bool
 }
 
 func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error) {
 	setupSh, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/setup.sh")
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
+	}
+
+	// Read browser flag from scenario.yaml
+	browserEnabled := false
+	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
+		var meta struct {
+			Browser bool `yaml:"browser"`
+		}
+		if yaml.Unmarshal(yamlData, &meta) == nil {
+			browserEnabled = meta.Browser
+		}
 	}
 
 	verifyScripts := map[string]string{}
@@ -67,8 +80,9 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 
 	var userData bytes.Buffer
 	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
-		SetupSh:       string(setupSh),
-		VerifyScripts: verifyScripts,
+		SetupSh:        string(setupSh),
+		VerifyScripts:  verifyScripts,
+		BrowserEnabled: browserEnabled,
 	}); err != nil {
 		return nil, fmt.Errorf("render user-data: %w", err)
 	}
@@ -89,13 +103,14 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 	}
 
 	s := &Session{
-		ID:        id,
-		Scenario:  scenario,
-		VMID:      vmID,
-		VMIP:      vmIP,
-		Status:    StatusProvisioning,
-		CreatedAt: now,
-		ExpiresAt: now.Add(m.ttl),
+		ID:             id,
+		Scenario:       scenario,
+		VMID:           vmID,
+		VMIP:           vmIP,
+		Status:         StatusProvisioning,
+		BrowserEnabled: browserEnabled,
+		CreatedAt:      now,
+		ExpiresAt:      now.Add(m.ttl),
 	}
 
 	m.mu.Lock()

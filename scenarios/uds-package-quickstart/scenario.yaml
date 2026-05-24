@@ -1,7 +1,8 @@
-title: "UDS Package Quickstart: Package Your First App"
+title: "UDS Package Quickstart: Deploy UDS and package Your First App"
 description: "Install the UDS toolchain, spin up a UDS Core cluster, and package a containerized app with Zarf, Istio service mesh, and Pepr policy enforcement — all running locally in k3d."
 duration: 60
 difficulty: beginner
+browser: true
 tags:
   - uds
   - zarf
