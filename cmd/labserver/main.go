@@ -56,6 +56,7 @@ func main() {
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
+	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.Handle("/", http.FileServer(http.Dir("web/static")))
 
 	log.Printf("labserver listening on :%s", port)
@@ -119,7 +120,15 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
+	s.proxyToVM(w, r, r.PathValue("id"), 7681, fmt.Sprintf("/t/%s", r.PathValue("id")))
+}
+
+func (s *server) shellProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
+	s.proxyToVM(w, r, id, 7682, fmt.Sprintf("/t/%s/shell", id))
+}
+
+func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, port int, stripPrefix string) {
 	sess, ok := s.mgr.Get(id)
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
@@ -129,8 +138,7 @@ func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	stripPrefix := fmt.Sprintf("/t/%s", id)
-	proxy.Handler(fmt.Sprintf("http://%s:7681", sess.VMIP), stripPrefix).ServeHTTP(w, r)
+	proxy.Handler(fmt.Sprintf("http://%s:%d", sess.VMIP, port), stripPrefix).ServeHTTP(w, r)
 }
 
 func jsonOK(w http.ResponseWriter, v any) {

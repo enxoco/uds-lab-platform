@@ -66,11 +66,13 @@ chmod +x "$SCENARIO_DIR/setup.sh"
 log "Running scenario setup in background..."
 nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
 
-# ── ttyd systemd service ───────────────────────────────────────────────────────
-log "Configuring ttyd service..."
-cat > /etc/systemd/system/ttyd.service << 'EOF'
+# ── ttyd systemd services ──────────────────────────────────────────────────────
+log "Configuring ttyd services..."
+
+# Port 7681: setup-aware entry (tails log → drops to bash when ready)
+cat > /etc/systemd/system/ttyd-main.service << 'EOF'
 [Unit]
-Description=ttyd browser terminal
+Description=ttyd main terminal (setup-aware)
 After=network.target
 
 [Service]
@@ -89,9 +91,31 @@ Environment=TERM=xterm-256color
 WantedBy=multi-user.target
 EOF
 
+# Port 7682: direct root shell (always available, no setup gating)
+cat > /etc/systemd/system/ttyd-shell.service << 'EOF'
+[Unit]
+Description=ttyd shell terminal (direct bash)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ttyd \
+  --port 7682 \
+  --interface 0.0.0.0 \
+  --writable \
+  bash -l
+Restart=always
+RestartSec=3
+Environment=HOME=/root
+Environment=TERM=xterm-256color
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-systemctl enable --now ttyd
-log "ttyd listening on :7681"
+systemctl enable --now ttyd-main ttyd-shell
+log "ttyd listening on :7681 (setup-aware) and :7682 (shell)"
 
 touch /var/log/lab-setup/ttyd-ready
 log "Bootstrap complete."

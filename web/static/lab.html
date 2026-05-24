@@ -97,10 +97,12 @@
     function addTab() {
       if (tabs.length >= MAX_TABS) return;
       const id = tabs.length + 1;
+      // Tab 1 = setup-aware entry; subsequent tabs = direct root shell
+      const src = id === 1 ? `/t/${SESSION}/` : `/t/${SESSION}/shell/`;
 
       const iframe = document.createElement('iframe');
-      iframe.src = `/t/${SESSION}/`;
-      iframe.title = `Terminal ${id}`;
+      iframe.src = src;
+      iframe.title = id === 1 ? 'Terminal 1 (setup)' : `Terminal ${id}`;
       iframe.style.cssText = 'width:100%;height:100%;border:none;display:none;';
       document.getElementById('terminal-frame').appendChild(iframe);
 
