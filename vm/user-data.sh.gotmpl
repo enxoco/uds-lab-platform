@@ -80,6 +80,23 @@ chmod +x "$SCENARIO_DIR/verify/{{$name}}"
 log "Running scenario setup in background..."
 nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
 
+# ── Shell config ──────────────────────────────────────────────────────────────
+cat >> /root/.bashrc << 'EOF'
+alias kubectl="uds zarf tools kubectl"
+alias k="uds zarf tools kubectl"
+if command -v uds &>/dev/null; then
+  source <(uds zarf tools kubectl completion bash)
+  complete -o default -F __start_kubectl kubectl
+  complete -o default -F __start_kubectl k
+fi
+EOF
+
+# ── tmux config ───────────────────────────────────────────────────────────────
+cat > /root/.tmux.conf << 'EOF'
+set -g mouse on
+set -g history-limit 10000
+EOF
+
 # ── Start tmux session ─────────────────────────────────────────────────────────
 log "Starting tmux session 'main'..."
 tmux new-session -d -s main /opt/lab-entry.sh
