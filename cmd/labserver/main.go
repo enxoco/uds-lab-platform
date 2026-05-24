@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"os"
@@ -130,10 +132,16 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	resp, err := http.Post(
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body failed", http.StatusBadRequest)
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(
 		fmt.Sprintf("http://%s:7680/cmd", sess.VMIP),
 		"application/json",
-		r.Body,
+		bytes.NewReader(body),
 	)
 	if err != nil {
 		http.Error(w, "injection failed", http.StatusBadGateway)

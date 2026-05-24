@@ -86,12 +86,15 @@ import json
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == '/cmd':
-            length = int(self.headers.get('Content-Length', 0))
-            body = json.loads(self.rfile.read(length))
-            data = body.get('data', '')
-            if data:
-                subprocess.run(['tmux', 'send-keys', '-t', 'main', '-l', data])
-                subprocess.run(['tmux', 'send-keys', '-t', 'main', 'Enter'])
+            try:
+                length = int(self.headers.get('Content-Length', 0))
+                body = json.loads(self.rfile.read(length))
+                data = body.get('data', '')
+                if data:
+                    subprocess.run(['tmux', 'send-keys', '-t', 'main', '-l', data])
+                    subprocess.run(['tmux', 'send-keys', '-t', 'main', 'Enter'])
+            except Exception:
+                pass
             self.send_response(200)
             self.end_headers()
         else:
