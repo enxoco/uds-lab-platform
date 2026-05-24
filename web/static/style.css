@@ -203,6 +203,8 @@ nav .logo {
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 .instructions-body pre:hover { border-color: var(--accent); }
+.lab-locked .instructions-body pre { cursor: not-allowed; opacity: 0.6; }
+.lab-locked .instructions-body pre:hover { border-color: var(--border); }
 .instructions-body pre.running {
   border-color: var(--accent) !important;
   box-shadow: 0 0 0 1px var(--accent);
