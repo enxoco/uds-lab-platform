@@ -1,0 +1,76 @@
+#!/bin/bash
+set -euo pipefail
+
+export HOME=/root
+export HCLOUD_TOKEN="${hcloud_token_for_vms}"
+
+apt-get update -y
+apt-get install -y curl ca-certificates
+
+# ── Docker (for Go build or running labserver container) ───────────────────────
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+tee /etc/apt/sources.list.d/docker.sources << EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: $(. /etc/os-release && echo "$${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+systemctl enable --now docker
+
+# ── Caddy ─────────────────────────────────────────────────────────────────────
+curl -sSL "https://caddyserver.com/api/download?os=linux&arch=amd64" \
+  -o /usr/local/bin/caddy
+chmod +x /usr/local/bin/caddy
+
+# ── Lab server env ─────────────────────────────────────────────────────────────
+mkdir -p /opt/labserver
+
+cat > /opt/labserver/.env << EOF
+HCLOUD_TOKEN=${hcloud_token_for_vms}
+SESSION_TTL_MINUTES=${session_ttl}
+LAB_DOMAIN=${domain}
+SCENARIOS_DIR=/opt/labserver/scenarios
+EOF
+
+cat > /etc/systemd/system/labserver.service << 'EOF'
+[Unit]
+Description=UDS Lab Server
+After=network.target docker.service
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/labserver
+EnvironmentFile=/opt/labserver/.env
+ExecStart=/opt/labserver/labserver
+Restart=always
+RestartSec=5
+Environment=HOME=/root
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+cat > /etc/systemd/system/caddy.service << 'EOF'
+[Unit]
+Description=Caddy reverse proxy
+After=network.target labserver.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/caddy run --config /opt/labserver/Caddyfile
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+# Services started after labserver binary and Caddyfile are deployed

@@ -1,0 +1,64 @@
+#!/bin/bash
+set -euo pipefail
+
+export HOME=/root
+LOG=/var/log/lab-setup/bootstrap.log
+mkdir -p /var/log/lab-setup
+touch "$LOG"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+
+# ── ttyd ───────────────────────────────────────────────────────────────────────
+log "Installing ttyd..."
+curl -sSL \
+  "https://github.com/tsl0922/ttyd/releases/download/1.7.7/ttyd.x86_64" \
+  -o /usr/local/bin/ttyd
+chmod +x /usr/local/bin/ttyd
+log "ttyd installed: $(ttyd --version 2>&1 | head -1)"
+
+# ── Scenario setup ─────────────────────────────────────────────────────────────
+SCENARIO_DIR="/opt/scenario"
+mkdir -p "$SCENARIO_DIR"
+
+log "Writing scenario setup script..."
+cat > "$SCENARIO_DIR/setup.sh" << 'SETUP_EOF'
+${setup_sh}
+SETUP_EOF
+chmod +x "$SCENARIO_DIR/setup.sh"
+
+log "Running scenario setup in background..."
+nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
+
+# ── ttyd systemd service ───────────────────────────────────────────────────────
+log "Configuring ttyd service..."
+cat > /etc/systemd/system/ttyd.service << 'EOF'
+[Unit]
+Description=ttyd browser terminal
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ttyd \
+  --port 7681 \
+  --interface 0.0.0.0 \
+  --writable \
+  bash -l
+Restart=always
+RestartSec=3
+Environment=HOME=/root
+Environment=TERM=xterm-256color
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable --now ttyd
+log "ttyd listening on :7681"
+
+# ── Ready signal ───────────────────────────────────────────────────────────────
+# ttyd is up; scenario setup continues in background.
+# Lab server polls /var/log/lab-setup/ready (written by setup.sh) to
+# determine when to mark the session as fully ready.
+touch /var/log/lab-setup/ttyd-ready
+log "Bootstrap complete."
