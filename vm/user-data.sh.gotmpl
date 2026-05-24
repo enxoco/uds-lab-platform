@@ -16,13 +16,29 @@ curl -sSL \
 chmod +x /usr/local/bin/ttyd
 log "ttyd installed: $(ttyd --version 2>&1 | head -1)"
 
+# ── MOTD ───────────────────────────────────────────────────────────────────────
+cat > /etc/profile.d/lab-status.sh << 'EOF'
+if [ -f /var/log/lab-setup/ready ]; then
+  echo ""
+  echo "  Lab environment ready. Happy hacking!"
+  echo ""
+else
+  echo ""
+  echo "  Lab setup in progress — tools are being installed."
+  echo "  Tail the log to follow along:"
+  echo ""
+  echo "    tail -f /var/log/lab-setup/uds-setup.log"
+  echo ""
+fi
+EOF
+
 # ── Scenario setup ─────────────────────────────────────────────────────────────
 SCENARIO_DIR="/opt/scenario"
 mkdir -p "$SCENARIO_DIR"
 
 log "Writing scenario setup script..."
 cat > "$SCENARIO_DIR/setup.sh" << 'SETUP_EOF'
-${setup_sh}
+{{.SetupSh}}
 SETUP_EOF
 chmod +x "$SCENARIO_DIR/setup.sh"
 
@@ -56,9 +72,5 @@ systemctl daemon-reload
 systemctl enable --now ttyd
 log "ttyd listening on :7681"
 
-# ── Ready signal ───────────────────────────────────────────────────────────────
-# ttyd is up; scenario setup continues in background.
-# Lab server polls /var/log/lab-setup/ready (written by setup.sh) to
-# determine when to mark the session as fully ready.
 touch /var/log/lab-setup/ttyd-ready
 log "Bootstrap complete."
