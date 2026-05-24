@@ -86,6 +86,7 @@ resource "hcloud_server" "workspace" {
   server_type = var.server_type
   image       = "ubuntu-24.04"
   location    = var.location
+  ssh_keys    = var.ssh_key_names
 
   user_data = templatefile("${path.module}/scripts/user-data.sh.tftpl", {
     init_script       = coder_agent.main.init_script

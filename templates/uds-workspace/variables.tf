@@ -7,7 +7,7 @@ variable "hetzner_token" {
 variable "server_type" {
   description = "Hetzner server type for lab workspace"
   type        = string
-  default     = "ccx23"
+  default     = "ccx13"
   validation {
     condition     = contains(["ccx13", "ccx23", "ccx33", "ccx43", "ccx53"], var.server_type)
     error_message = "Must be ccx13 (8GB), ccx23 (16GB), ccx33 (32GB), ccx43 (64GB), or ccx53 (96GB)."
@@ -22,4 +22,10 @@ variable "location" {
     condition     = contains(["ash", "hil", "nbg1", "fsn1", "hel1"], var.location)
     error_message = "Must be ash, hil, nbg1, fsn1, or hel1."
   }
+}
+
+variable "ssh_key_names" {
+  description = "Hetzner SSH key names to inject into the workspace server"
+  type        = list(string)
+  default     = ["local"]
 }

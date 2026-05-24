@@ -60,6 +60,7 @@ configure_kubeconfig() {
 mode_uds_core_slim() {
   log "mode: uds deploy k3d-core-slim-dev:latest"
   install_docker
+  install_k3d
   install_uds_cli
   uds deploy k3d-core-slim-dev:latest --confirm
 }
