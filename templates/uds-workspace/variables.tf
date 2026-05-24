@@ -7,10 +7,10 @@ variable "hetzner_token" {
 variable "server_type" {
   description = "Hetzner server type for lab workspace"
   type        = string
-  default     = "cx41"
+  default     = "ccx23"
   validation {
-    condition     = contains(["ccx13", "ccx23", "ccx33", "cx41", "cx51"], var.server_type)
-    error_message = "Must be ccx13 (8GB), ccx23 (16GB), ccx33 (32GB), cx41 (16GB), or cx51 (32GB)."
+    condition     = contains(["ccx13", "ccx23", "ccx33", "ccx43", "ccx53"], var.server_type)
+    error_message = "Must be ccx13 (8GB), ccx23 (16GB), ccx33 (32GB), ccx43 (64GB), or ccx53 (96GB)."
   }
 }
 
