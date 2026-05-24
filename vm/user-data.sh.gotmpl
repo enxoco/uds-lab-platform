@@ -11,7 +11,7 @@ log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 # ── Base packages ──────────────────────────────────────────────────────────────
 log "Installing base packages..."
 apt-get update -q
-apt-get install -y -q tmux curl
+apt-get install -y -q tmux curl{{if .BrowserEnabled}} xvfb x11vnc novnc chromium-browser{{end}}
 
 # ── ttyd ───────────────────────────────────────────────────────────────────────
 log "Installing ttyd..."
@@ -81,18 +81,11 @@ log "Running scenario setup in background..."
 nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
 
 {{if .BrowserEnabled}}
-# ── Browser environment (background) ──────────────────────────────────────────
-log "Starting browser environment setup in background..."
-cat > /opt/browser-setup.sh << 'BROWSER_EOF'
-#!/bin/bash
-set -euo pipefail
-BLOG=/var/log/lab-setup/browser-setup.log
-log() { echo "[$(date '+%H:%M:%S')] [browser] $*" | tee -a "$BLOG"; }
+# ── Browser environment ────────────────────────────────────────────────────────
+log "Configuring browser environment services..."
 
-log "Installing Xvfb, x11vnc, noVNC, Chromium..."
-apt-get install -y -q xvfb x11vnc novnc chromium-browser
-
-log "Creating systemd services..."
+# noVNC index symlink so / serves the client directly
+ln -sf /usr/share/novnc/vnc_lite.html /usr/share/novnc/index.html
 
 cat > /etc/systemd/system/lab-xvfb.service << 'EOF'
 [Unit]
@@ -163,13 +156,6 @@ RestartSec=5
 WantedBy=multi-user.target
 EOF
 
-systemctl daemon-reload
-systemctl enable --now lab-xvfb lab-x11vnc lab-novnc lab-browser
-log "Browser environment ready."
-touch /var/log/lab-setup/browser-ready
-BROWSER_EOF
-chmod +x /opt/browser-setup.sh
-nohup bash /opt/browser-setup.sh >> /var/log/lab-setup/bootstrap.log 2>&1 &
 {{end}}
 
 # ── Shell config ──────────────────────────────────────────────────────────────
@@ -318,6 +304,9 @@ EOF
 systemctl daemon-reload
 systemctl enable --now ttyd-main ttyd-shell lab-inject
 log "ttyd listening on :7681 (main), :7682 (shell); inject on :7680"
-
+{{if .BrowserEnabled}}
+systemctl enable --now lab-xvfb lab-x11vnc lab-novnc lab-browser
+log "browser environment listening on :6080"
+{{end}}
 touch /var/log/lab-setup/ttyd-ready
 log "Bootstrap complete."
