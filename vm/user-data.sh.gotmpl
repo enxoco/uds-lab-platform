@@ -16,21 +16,42 @@ curl -sSL \
 chmod +x /usr/local/bin/ttyd
 log "ttyd installed: $(ttyd --version 2>&1 | head -1)"
 
-# ── MOTD ───────────────────────────────────────────────────────────────────────
-cat > /etc/profile.d/lab-status.sh << 'EOF'
-if [ -f /var/log/lab-setup/ready ]; then
+# ── Lab entry script ───────────────────────────────────────────────────────────
+cat > /opt/lab-entry.sh << 'EOF'
+#!/bin/bash
+export HOME=/root
+
+if [ ! -f /var/log/lab-setup/ready ]; then
+  clear
   echo ""
-  echo "  Lab environment ready. Happy hacking!"
+  echo "  ┌─────────────────────────────────────────────┐"
+  echo "  │  Lab environment is being prepared...       │"
+  echo "  │  This takes 5-10 minutes (image pulls).     │"
+  echo "  └─────────────────────────────────────────────┘"
   echo ""
-else
+
+  tail -f /var/log/lab-setup/uds-setup.log &
+  TAIL_PID=$!
+
+  while [ ! -f /var/log/lab-setup/ready ]; do
+    sleep 3
+  done
+
+  kill $TAIL_PID 2>/dev/null
+  wait $TAIL_PID 2>/dev/null
+
+  clear
   echo ""
-  echo "  Lab setup in progress — tools are being installed."
-  echo "  Tail the log to follow along:"
-  echo ""
-  echo "    tail -f /var/log/lab-setup/uds-setup.log"
+  echo "  ┌─────────────────────────────────────────────┐"
+  echo "  │  Lab ready! Tools installed:                │"
+  echo "  │    uds  •  zarf  •  k3d  •  docker         │"
+  echo "  └─────────────────────────────────────────────┘"
   echo ""
 fi
+
+exec bash -l
 EOF
+chmod +x /opt/lab-entry.sh
 
 # ── Scenario setup ─────────────────────────────────────────────────────────────
 SCENARIO_DIR="/opt/scenario"
@@ -58,7 +79,7 @@ ExecStart=/usr/local/bin/ttyd \
   --port 7681 \
   --interface 0.0.0.0 \
   --writable \
-  bash -l
+  /opt/lab-entry.sh
 Restart=always
 RestartSec=3
 Environment=HOME=/root

@@ -13,8 +13,26 @@
     <span id="scenario-title" style="color:var(--text-muted);font-size:13px;"></span>
     <span style="flex:1"></span>
     <span class="timer" id="timer">60:00</span>
-    <button class="btn btn-danger" id="end-btn" onclick="endLab()">End Lab</button>
+    <button class="btn btn-danger" id="end-btn" onclick="confirmEnd()">End Lab</button>
   </nav>
+
+  <!-- Teardown overlay -->
+  <div id="teardown-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100;align-items:center;justify-content:center;flex-direction:column;gap:16px;">
+    <div class="spinner"></div>
+    <div style="color:var(--text);font-size:14px;">Tearing down lab environment…</div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:360px;width:90%;display:flex;flex-direction:column;gap:16px;">
+      <div style="font-weight:600;font-size:16px;">End this lab?</div>
+      <div style="color:var(--text-muted);font-size:13px;">The VM will be destroyed and your progress will be lost.</div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;">
+        <button class="btn btn-ghost" onclick="document.getElementById('confirm-overlay').style.display='none'">Cancel</button>
+        <button class="btn btn-danger" onclick="endLab()">End Lab</button>
+      </div>
+    </div>
+  </div>
 
   <div class="lab-layout">
     <!-- Instructions -->
@@ -163,7 +181,13 @@
     }
 
     // ── End lab ─────────────────────────────────────────────────────────────
+    function confirmEnd() {
+      document.getElementById('confirm-overlay').style.display = 'flex';
+    }
+
     async function endLab() {
+      document.getElementById('confirm-overlay').style.display = 'none';
+      document.getElementById('teardown-overlay').style.display = 'flex';
       clearInterval(timerInterval);
       clearInterval(pollInterval);
       await fetch(`/api/sessions/${SESSION}`, { method: 'DELETE' }).catch(() => {});
