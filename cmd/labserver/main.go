@@ -55,6 +55,7 @@ func main() {
 	mux.HandleFunc("POST /api/sessions", srv.createSession)
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
+	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.Handle("/", http.FileServer(http.Dir("web/static")))
@@ -117,6 +118,29 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if sess.Status != session.StatusReady {
+		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
+		return
+	}
+	resp, err := http.Post(
+		fmt.Sprintf("http://%s:7680/cmd", sess.VMIP),
+		"application/json",
+		r.Body,
+	)
+	if err != nil {
+		http.Error(w, "injection failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {

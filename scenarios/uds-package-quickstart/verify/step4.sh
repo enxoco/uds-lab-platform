@@ -1,5 +1,8 @@
 #!/bin/bash
-# Pass when the hello-uds Package CR phase is Ready.
-PHASE=$(kubectl get package hello-uds -n hello-uds \
-  -o jsonpath='{.status.phase}' 2>/dev/null)
-[[ "$PHASE" == "Ready" ]]
+# Pass when uds-package.yaml exists with the Package CR.
+MANIFEST=/root/hello-uds/manifests/uds-package.yaml
+[[ -f "$MANIFEST" ]] || exit 1
+grep -q "kind: Package" "$MANIFEST" || exit 1
+grep -q "uds.dev/v1alpha1" "$MANIFEST" || exit 1
+grep -q "hello-uds" "$MANIFEST" || exit 1
+exit 0

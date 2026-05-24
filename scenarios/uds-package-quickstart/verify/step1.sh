@@ -1,5 +1,6 @@
 #!/bin/bash
-# Pass when UDS Core key pods are Running.
-RUNNING=$(kubectl get pods -n uds-dev-stack --no-headers 2>/dev/null \
-  | awk '$3=="Running"' | wc -l)
-[[ "$RUNNING" -ge 3 ]]
+# Pass when docker, k3d, and uds are all installed.
+command -v docker >/dev/null 2>&1 || exit 1
+command -v k3d >/dev/null 2>&1 || exit 1
+command -v uds >/dev/null 2>&1 || exit 1
+exit 0

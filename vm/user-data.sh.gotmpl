@@ -8,6 +8,11 @@ touch "$LOG"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
+# ── Base packages ──────────────────────────────────────────────────────────────
+log "Installing base packages..."
+apt-get update -q
+apt-get install -y -q tmux curl
+
 # ── ttyd ───────────────────────────────────────────────────────────────────────
 log "Installing ttyd..."
 curl -sSL \
@@ -26,7 +31,7 @@ if [ ! -f /var/log/lab-setup/ready ]; then
   echo ""
   echo "  ┌─────────────────────────────────────────────┐"
   echo "  │  Lab environment is being prepared...       │"
-  echo "  │  This takes 5-10 minutes (image pulls).     │"
+  echo "  │  This takes about 1-2 minutes.              │"
   echo "  └─────────────────────────────────────────────┘"
   echo ""
 
@@ -43,8 +48,8 @@ if [ ! -f /var/log/lab-setup/ready ]; then
   clear
   echo ""
   echo "  ┌─────────────────────────────────────────────┐"
-  echo "  │  Lab ready! Tools installed:                │"
-  echo "  │    uds  •  zarf  •  k3d  •  docker         │"
+  echo "  │  Lab ready!                                 │"
+  echo "  │  Follow the steps in the left panel.        │"
   echo "  └─────────────────────────────────────────────┘"
   echo ""
 fi
@@ -66,13 +71,45 @@ chmod +x "$SCENARIO_DIR/setup.sh"
 log "Running scenario setup in background..."
 nohup bash "$SCENARIO_DIR/setup.sh" >> "$LOG" 2>&1 &
 
+# ── Start tmux session ─────────────────────────────────────────────────────────
+log "Starting tmux session 'main'..."
+tmux new-session -d -s main /opt/lab-entry.sh
+
+# ── Input injection server (port 7680) ─────────────────────────────────────────
+log "Writing input injection server..."
+cat > /opt/lab-inject.py << 'EOF'
+#!/usr/bin/env python3
+import http.server
+import subprocess
+import json
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_POST(self):
+        if self.path == '/cmd':
+            length = int(self.headers.get('Content-Length', 0))
+            body = json.loads(self.rfile.read(length))
+            data = body.get('data', '')
+            if data:
+                subprocess.run(['tmux', 'send-keys', '-t', 'main', '-l', data])
+                subprocess.run(['tmux', 'send-keys', '-t', 'main', 'Enter'])
+            self.send_response(200)
+            self.end_headers()
+        else:
+            self.send_response(404)
+            self.end_headers()
+    def log_message(self, *args): pass
+
+http.server.HTTPServer(('0.0.0.0', 7680), Handler).serve_forever()
+EOF
+chmod +x /opt/lab-inject.py
+
 # ── ttyd systemd services ──────────────────────────────────────────────────────
 log "Configuring ttyd services..."
 
-# Port 7681: setup-aware entry (tails log → drops to bash when ready)
+# Port 7681: setup-aware entry (tmux main session)
 cat > /etc/systemd/system/ttyd-main.service << 'EOF'
 [Unit]
-Description=ttyd main terminal (setup-aware)
+Description=ttyd main terminal (tmux main session)
 After=network.target
 
 [Service]
@@ -81,7 +118,7 @@ ExecStart=/usr/local/bin/ttyd \
   --port 7681 \
   --interface 0.0.0.0 \
   --writable \
-  /opt/lab-entry.sh
+  tmux attach-session -t main
 Restart=always
 RestartSec=3
 Environment=HOME=/root
@@ -113,9 +150,25 @@ Environment=TERM=xterm-256color
 WantedBy=multi-user.target
 EOF
 
+# Port 7680: input injection server
+cat > /etc/systemd/system/lab-inject.service << 'EOF'
+[Unit]
+Description=Lab input injection server
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/lab-inject.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
 systemctl daemon-reload
-systemctl enable --now ttyd-main ttyd-shell
-log "ttyd listening on :7681 (setup-aware) and :7682 (shell)"
+systemctl enable --now ttyd-main ttyd-shell lab-inject
+log "ttyd listening on :7681 (main), :7682 (shell); inject on :7680"
 
 touch /var/log/lab-setup/ttyd-ready
 log "Bootstrap complete."

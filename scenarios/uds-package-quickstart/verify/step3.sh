@@ -1,8 +1,9 @@
 #!/bin/bash
-# Pass when uds-package.yaml exists with the Package CR.
-MANIFEST=/root/hello-uds/manifests/uds-package.yaml
-[[ -f "$MANIFEST" ]] || exit 1
-grep -q "kind: Package" "$MANIFEST" || exit 1
-grep -q "uds.dev/v1alpha1" "$MANIFEST" || exit 1
-grep -q "hello-uds" "$MANIFEST" || exit 1
+# Pass when zarf.yaml and values/values.yaml exist with expected content.
+BASE=/root/hello-uds
+[[ -f "$BASE/zarf.yaml" ]] || exit 1
+[[ -f "$BASE/values/values.yaml" ]] || exit 1
+grep -q "ZarfPackageConfig" "$BASE/zarf.yaml" || exit 1
+grep -q "hello-uds" "$BASE/zarf.yaml" || exit 1
+grep -q "ZARF_VAR_DOMAIN" "$BASE/values/values.yaml" || exit 1
 exit 0

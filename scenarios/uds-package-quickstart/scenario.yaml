@@ -1,5 +1,5 @@
 title: "UDS Package Quickstart: Package Your First App"
-description: "Turn a containerized app into a deployable UDS package with Zarf, Istio service mesh, and Pepr policy enforcement — all running locally in k3d."
+description: "Install the UDS toolchain, spin up a UDS Core cluster, and package a containerized app with Zarf, Istio service mesh, and Pepr policy enforcement — all running locally in k3d."
 duration: 60
 difficulty: beginner
 tags:
@@ -9,15 +9,18 @@ tags:
   - istio
 
 steps:
-  - title: "Verify UDS Core"
-    text: steps/1-verify-uds-core.md
+  - title: "Install prerequisites"
+    text: steps/1-install-tools.md
     verify: verify/step1.sh
-  - title: "Write zarf.yaml and values bridge"
-    text: steps/2-zarf-yaml.md
+  - title: "Deploy UDS Core"
+    text: steps/2-deploy-uds-core.md
     verify: verify/step2.sh
-  - title: "Write the UDS Package CR"
-    text: steps/3-uds-package-cr.md
+  - title: "Write zarf.yaml and values bridge"
+    text: steps/3-zarf-yaml.md
     verify: verify/step3.sh
-  - title: "Build, deploy, and verify"
-    text: steps/4-build-deploy.md
+  - title: "Write the UDS Package CR"
+    text: steps/4-uds-package-cr.md
     verify: verify/step4.sh
+  - title: "Build, deploy, and verify"
+    text: steps/5-build-deploy.md
+    verify: verify/step5.sh

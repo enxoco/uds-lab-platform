@@ -1,4 +1,4 @@
-# Step 3 – Write the UDS Package CR
+# Step 4 – Write the UDS Package CR
 
 The **UDS Package CR** is what makes a Zarf package a *UDS* package. The Pepr operator watches for `kind: Package` resources and generates:
 

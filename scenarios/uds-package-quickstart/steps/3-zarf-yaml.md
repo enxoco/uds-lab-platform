@@ -1,4 +1,4 @@
-# Step 2 – Write `zarf.yaml` and the values bridge
+# Step 3 – Write `zarf.yaml` and the values bridge
 
 Change into the package directory:
 

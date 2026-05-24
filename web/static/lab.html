@@ -165,15 +165,17 @@
       }, 4000);
     }
 
-    // ── Click-to-run: send to active tab ────────────────────────────────────
+    // ── Click-to-run: inject into tmux main session via VM injection server ─
     function bindCodeBlocks() {
       document.querySelectorAll('#instructions-body pre').forEach(pre => {
         pre.onclick = () => {
-          if (activeTab === null || !tabs[activeTab]) return;
-          const win = tabs[activeTab].iframe.contentWindow;
-          if (!win) return;
+          if (!SESSION) return;
           const code = (pre.querySelector('code')?.textContent || pre.textContent).trimEnd();
-          win.postMessage({ type: 'input', data: code + '\n' }, '*');
+          fetch(`/t/${SESSION}/cmd`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: code }),
+          }).catch(() => {});
         };
       });
     }
