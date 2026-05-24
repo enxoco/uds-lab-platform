@@ -7,12 +7,10 @@ terraform {
   }
 }
 
-provider "hcloud" {
-  token = var.hetzner_token
-}
+provider "hcloud" {}
 
 locals {
-  access_url = var.coder_access_url != "" ? var.coder_access_url : "http://${hcloud_server.coder.ipv4_address}:3000"
+  access_url = var.coder_access_url != "" ? var.coder_access_url : "http://${hcloud_server.coder.ipv4_address}:3333"
 }
 
 resource "hcloud_firewall" "coder" {
@@ -28,7 +26,7 @@ resource "hcloud_firewall" "coder" {
   rule {
     direction = "in"
     protocol  = "tcp"
-    port      = "3000"
+    port      = "3333"
     source_ips = ["0.0.0.0/0", "::/0"]
   }
 }
@@ -39,11 +37,12 @@ resource "hcloud_server" "coder" {
   image        = "ubuntu-24.04"
   location     = var.location
   firewall_ids = [hcloud_firewall.coder.id]
+  ssh_keys     = var.ssh_key_names
 
   user_data = templatefile("${path.module}/user-data.sh.tftpl", {
     coder_version     = var.coder_version
     postgres_password = var.postgres_password
-    access_url        = local.access_url
+    access_url        = var.coder_access_url
   })
 
   labels = {

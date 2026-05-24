@@ -8,4 +8,4 @@ components:
   terraform:
     coder-server:
       vars:
-        server_type: cx22
+        server_type: ccx13

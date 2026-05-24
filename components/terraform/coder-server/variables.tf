@@ -1,13 +1,7 @@
-variable "hetzner_token" {
-  description = "Hetzner Cloud API token"
-  type        = string
-  sensitive   = true
-}
-
 variable "server_type" {
   description = "Hetzner server type for Coder control plane"
   type        = string
-  default     = "cx22"
+  default     = "ccx13"
 }
 
 variable "location" {
@@ -33,4 +27,16 @@ variable "postgres_password" {
   type        = string
   sensitive   = true
   default     = "changeme"
+}
+
+variable "stage" {
+  description = "Deployment stage (e.g. dev, prod) — injected by Atmos"
+  type        = string
+  default     = ""
+}
+
+variable "ssh_key_names" {
+  description = "Hetzner SSH key names to inject into the server"
+  type        = list(string)
+  default     = []
 }

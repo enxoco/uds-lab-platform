@@ -20,3 +20,13 @@ stacks:
 logs:
   file: "/dev/stderr"
   level: Info
+
+commands:
+  - name: deploy-coder
+    description: "Deploy coder-server with interactive location + server-type picker"
+    arguments:
+      - name: stack
+        description: "Atmos stack name (default: dev)"
+    steps:
+      - type: shell
+        command: bash scripts/deploy-coder.sh {{ .Arguments.stack }}

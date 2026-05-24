@@ -29,7 +29,7 @@ Coder available at http://localhost:3000. Create admin account on first visit.
 ## Deploy Coder server to Hetzner
 
 ```bash
-export HETZNER_API_TOKEN=your_token_here
+export HCLOUD_TOKEN=your_token_here
 export TF_VAR_postgres_password=your_password_here
 
 atmos terraform apply coder-server --stack dev
@@ -55,13 +55,7 @@ Push the template:
 coder templates push uds-workspace --directory templates/uds-workspace/
 ```
 
-Set the Hetzner token as a template variable in Coder UI, or via:
-
-```bash
-coder templates push uds-workspace \
-  --directory templates/uds-workspace/ \
-  --var hetzner_token=$HETZNER_API_TOKEN
-```
+Set the Hetzner token as a template variable in Coder UI, or ensure `HCLOUD_TOKEN` is set in the Coder server's environment.
 
 ## Creating a workspace
 
@@ -96,7 +90,7 @@ templates/
 
 | Resource | Type | Cost |
 |----------|------|------|
-| Coder server | cx22 (4GB) | ~$0.009/hr |
+| Coder server | ccx13 (8GB dedicated) | ~$0.020/hr |
 | Lab workspace | cx41 (16GB) | ~$0.027/hr |
 | Idle workspace (stopped) | — | $0 |
 
