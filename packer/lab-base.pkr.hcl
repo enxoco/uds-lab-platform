@@ -22,7 +22,7 @@ source "hcloud" "lab-base" {
   token         = var.hcloud_token
   image         = "ubuntu-24.04"
   location      = var.location
-  server_type   = "cx22"
+  server_type   = "cpx11"
   snapshot_name = "uds-lab-base-${formatdate("YYYYMMDD-hhmmss", timestamp())}"
   snapshot_labels = {
     role = "uds-lab-base"
