@@ -169,6 +169,8 @@
     function bindCodeBlocks() {
       document.querySelectorAll('#instructions-body pre').forEach(pre => {
         pre.onclick = () => {
+          pre.classList.add('running');
+          setTimeout(() => pre.classList.remove('running'), 600);
           if (!SESSION) return;
           const code = (pre.querySelector('code')?.textContent || pre.textContent).trimEnd();
           fetch(`/t/${SESSION}/cmd`, {

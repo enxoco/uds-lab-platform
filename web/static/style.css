@@ -190,24 +190,41 @@ nav .logo {
   background: #010409;
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 12px 14px;
-  overflow-x: auto;
+  padding: 12px 14px 32px;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
   margin: 12px 0;
   font-family: var(--mono);
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
   position: relative;
+  transition: border-color 0.15s, box-shadow 0.15s;
 }
 .instructions-body pre:hover { border-color: var(--accent); }
+.instructions-body pre.running {
+  border-color: var(--accent) !important;
+  box-shadow: 0 0 0 1px var(--accent);
+}
 .instructions-body pre::after {
-  content: "click to run";
+  content: "▶  run";
   position: absolute;
-  top: 6px;
-  right: 8px;
-  font-size: 10px;
-  color: var(--text-muted);
+  bottom: 7px;
+  right: 10px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--accent);
   font-family: var(--font);
+  background: #010409;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 8px;
+  pointer-events: none;
+}
+.instructions-body pre:hover::after {
+  border-color: var(--accent);
+  background: rgba(88,166,255,0.08);
 }
 .instructions-body ul, .instructions-body ol { padding-left: 20px; margin-bottom: 12px; }
 .instructions-body li { color: var(--text-muted); margin-bottom: 4px; }
