@@ -11,7 +11,8 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin:  func(r *http.Request) bool { return true },
+	Subprotocols: []string{"tty"},
 }
 
 // Handler proxies HTTP and WebSocket traffic to target, stripping prefix.
@@ -34,7 +35,9 @@ func Handler(target string, stripPrefix string) http.Handler {
 }
 
 func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
-	upstream, _, err := websocket.DefaultDialer.Dial(targetWS, nil)
+	upstream, _, err := websocket.DefaultDialer.Dial(targetWS, http.Header{
+		"Sec-WebSocket-Protocol": []string{"tty"},
+	})
 	if err != nil {
 		http.Error(w, "terminal not ready", http.StatusBadGateway)
 		return
