@@ -42,15 +42,35 @@ func NewManager(hcloud *hetzner.Client, ttl time.Duration, vmCfg VMConfig) *Mana
 	return m
 }
 
+type userDataInput struct {
+	SetupSh       string
+	VerifyScripts map[string]string
+}
+
 func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error) {
 	setupSh, err := os.ReadFile(filepath.Join(m.vmCfg.ScenariosDir, scenario, "setup.sh"))
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
 	}
 
+	verifyScripts := map[string]string{}
+	verifyDir := filepath.Join(m.vmCfg.ScenariosDir, scenario, "verify")
+	if entries, err := os.ReadDir(verifyDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				continue
+			}
+			content, err := os.ReadFile(filepath.Join(verifyDir, e.Name()))
+			if err == nil {
+				verifyScripts[e.Name()] = string(content)
+			}
+		}
+	}
+
 	var userData bytes.Buffer
-	if err := m.vmCfg.UserDataTmpl.Execute(&userData, map[string]string{
-		"SetupSh": string(setupSh),
+	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
+		SetupSh:       string(setupSh),
+		VerifyScripts: verifyScripts,
 	}); err != nil {
 		return nil, fmt.Errorf("render user-data: %w", err)
 	}

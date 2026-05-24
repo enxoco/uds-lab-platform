@@ -9,10 +9,11 @@ import (
 )
 
 type Step struct {
-	Title   string `yaml:"title" json:"title"`
-	Text    string `yaml:"text"  json:"-"`
-	Verify  string `yaml:"verify" json:"-"`
-	Content string `yaml:"-"     json:"content"`
+	Title     string `yaml:"title"  json:"title"`
+	Text      string `yaml:"text"   json:"-"`
+	Verify    string `yaml:"verify" json:"-"`
+	Content   string `yaml:"-"      json:"content"`
+	HasVerify bool   `yaml:"-"      json:"has_verify"`
 }
 
 type Scenario struct {
@@ -53,6 +54,7 @@ func Load(scenariosDir, id string) (*Scenario, error) {
 			return nil, fmt.Errorf("step %d text file %q: %w", i+1, step.Text, err)
 		}
 		s.Steps[i].Content = string(content)
+		s.Steps[i].HasVerify = step.Verify != ""
 	}
 
 	return &s, nil

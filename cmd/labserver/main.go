@@ -58,6 +58,7 @@ func main() {
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
 	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
+	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.Handle("/", http.FileServer(http.Dir("web/static")))
@@ -120,6 +121,33 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if sess.Status != session.StatusReady {
+		jsonError(w, "terminal not ready", http.StatusServiceUnavailable)
+		return
+	}
+	step := r.PathValue("step")
+	body, _ := json.Marshal(map[string]string{"step": step})
+	client := &http.Client{Timeout: 35 * time.Second}
+	resp, err := client.Post(
+		fmt.Sprintf("http://%s:7680/verify", sess.VMIP),
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		jsonError(w, "verify failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.Header().Set("Content-Type", "application/json")
+	io.Copy(w, resp.Body)
 }
 
 func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {

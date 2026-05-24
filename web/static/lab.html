@@ -47,7 +47,10 @@
       <div class="instructions-footer">
         <button class="btn btn-ghost" id="prev-btn" onclick="prevStep()">← Prev</button>
         <div class="step-dots" id="step-dots"></div>
-        <button class="btn btn-primary" id="next-btn" onclick="nextStep()">Next →</button>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <button class="btn btn-check" id="check-btn" onclick="checkStep()" style="display:none;">Check</button>
+          <button class="btn btn-primary" id="next-btn" onclick="nextStep()">Next →</button>
+        </div>
       </div>
     </div>
 
@@ -77,6 +80,7 @@
     let steps = [];
     let currentStep = 0;
     let labReady = false;
+    let stepVerified = {};
     let expiresAt = null;
     let timerInterval = null;
     let pollInterval = null;
@@ -209,12 +213,56 @@
       const body = document.getElementById('instructions-body');
       body.innerHTML = marked.parse(step.content || '');
       body.scrollTop = 0;
+
+      const verified = !!stepVerified[currentStep];
+      const checkBtn = document.getElementById('check-btn');
+      const nextBtn  = document.getElementById('next-btn');
+
       document.getElementById('prev-btn').disabled = !labReady || currentStep === 0;
-      document.getElementById('next-btn').disabled = !labReady;
-      document.getElementById('next-btn').textContent =
-        currentStep === steps.length - 1 ? 'Finish' : 'Next →';
+
+      if (step.has_verify) {
+        checkBtn.style.display = 'inline-flex';
+        checkBtn.disabled = !labReady || verified;
+        checkBtn.className = 'btn ' + (verified ? 'btn-check-pass' : 'btn-check');
+        checkBtn.textContent = verified ? '✓ Passed' : 'Check';
+        nextBtn.disabled = !labReady || !verified;
+      } else {
+        checkBtn.style.display = 'none';
+        nextBtn.disabled = !labReady;
+      }
+
+      nextBtn.textContent = currentStep === steps.length - 1 ? 'Finish' : 'Next →';
       updateDots();
       bindCodeBlocks();
+    }
+
+    // ── Step verification ───────────────────────────────────────────────────
+    async function checkStep() {
+      const btn = document.getElementById('check-btn');
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      btn.className = 'btn btn-check';
+      try {
+        const res = await fetch(`/api/sessions/${SESSION}/verify/${currentStep + 1}`, { method: 'POST' });
+        const data = await res.json();
+        if (data.pass) {
+          stepVerified[currentStep] = true;
+          btn.textContent = '✓ Passed';
+          btn.className = 'btn btn-check-pass';
+          document.getElementById('next-btn').disabled = false;
+        } else {
+          btn.textContent = '✗ Not yet';
+          btn.className = 'btn btn-check-fail';
+          setTimeout(() => {
+            btn.textContent = 'Check';
+            btn.className = 'btn btn-check';
+            btn.disabled = false;
+          }, 2000);
+        }
+      } catch {
+        btn.textContent = 'Check';
+        btn.disabled = false;
+      }
     }
 
     function prevStep() { showStep(currentStep - 1); }
