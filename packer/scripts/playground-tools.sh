@@ -21,9 +21,22 @@ curl -sSL \
 chmod +x /usr/local/bin/yq
 log "yq: $(yq --version)"
 
-# ── Docker ─────────────────────────────────────────────────────────────────────
-log "Installing Docker..."
-curl -fsSL https://get.docker.com | sh
+# ── Docker CE (official apt repo) ─────────────────────────────────────────────
+log "Installing Docker CE..."
+apt-get install -y -q ca-certificates curl
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+chmod a+r /etc/apt/keyrings/docker.asc
+. /etc/os-release && tee /etc/apt/sources.list.d/docker.sources <<EOF
+Types: deb
+URIs: https://download.docker.com/linux/ubuntu
+Suites: ${UBUNTU_CODENAME:-$VERSION_CODENAME}
+Components: stable
+Architectures: $(dpkg --print-architecture)
+Signed-By: /etc/apt/keyrings/docker.asc
+EOF
+apt-get update -q
+apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 systemctl enable docker
 systemctl start docker
 log "Docker: $(docker --version)"
