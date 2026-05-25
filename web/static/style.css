@@ -196,6 +196,9 @@ nav .logo {
   padding: 20px;
 }
 
+.vnc-link::after { content: ' ⬡'; font-size: 10px; opacity: 0.6; }
+.vnc-link-opening { opacity: 0.5; }
+
 .instructions-body h1 { font-size: 18px; margin-bottom: 16px; }
 .instructions-body h2 { font-size: 15px; margin: 20px 0 8px; }
 .instructions-body h3 { font-size: 14px; margin: 16px 0 6px; color: var(--text-muted); }

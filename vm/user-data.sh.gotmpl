@@ -28,6 +28,7 @@ chmod +x "$SCENARIO_DIR/verify/{{$name}}"
 {{end}}
 
 # ── Start tmux session ─────────────────────────────────────────────────────────
+touch /var/log/lab-setup/uds-setup.log
 log "Starting tmux session 'main'..."
 tmux new-session -d -s main /opt/lab-entry.sh
 

@@ -19,9 +19,11 @@ k3d kubeconfig get uds > /root/.kube/config
 chmod 600 /root/.kube/config
 export KUBECONFIG=/root/.kube/config
 
-log "Waiting for pods to be ready..."
-uds zarf tools kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=300s 2>&1 | \
-  tee -a /var/log/lab-setup/uds-setup.log
+log "Waiting for deployments and statefulsets to be ready..."
+uds zarf tools kubectl wait --for=condition=Available deployment --all --all-namespaces --timeout=300s 2>&1 | \
+  tee -a /var/log/lab-setup/uds-setup.log || true
+uds zarf tools kubectl wait --for=condition=Ready statefulset --all --all-namespaces --timeout=300s 2>&1 | \
+  tee -a /var/log/lab-setup/uds-setup.log || true
 
 log "Lab ready."
 touch /var/log/lab-setup/ready

@@ -201,10 +201,13 @@
           const u = new URL(a.href);
           if (!u.hostname.endsWith('.uds.dev')) return;
         } catch { return; }
-        a.title = 'Opens in VM browser';
+        a.title = '⬡ Opens in VM browser';
+        a.classList.add('vnc-link');
         a.onclick = (e) => {
           e.preventDefault();
           if (!labReady) return;
+          a.classList.add('vnc-link-opening');
+          setTimeout(() => a.classList.remove('vnc-link-opening'), 1000);
           fetch(`/t/${SESSION}/navigate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
