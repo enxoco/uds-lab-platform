@@ -1,0 +1,11 @@
+title: "UDS Core Playground"
+description: "Pre-deployed k3d-core-slim-dev cluster. UDS Core, Keycloak, and Istio are running — dive straight in."
+duration: 60
+difficulty: intermediate
+playground: true
+browser: true
+image: ""
+
+steps:
+  - title: "Welcome"
+    text: steps/welcome.md

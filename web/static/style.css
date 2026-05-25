@@ -108,6 +108,24 @@ nav .logo {
   font-size: 12px;
 }
 
+.tag-playground {
+  background: rgba(88,166,255,0.1);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.card-header h2 { margin-bottom: 0; }
+
+.playground-card { border-color: rgba(88,166,255,0.3); }
+
 .btn {
   display: inline-flex;
   align-items: center;

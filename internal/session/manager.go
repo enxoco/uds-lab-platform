@@ -55,14 +55,19 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
 	}
 
-	// Read browser flag from scenario.yaml
+	// Read flags from scenario.yaml
 	browserEnabled := false
+	vmImage := m.vmCfg.Image
 	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
 		var meta struct {
-			Browser bool `yaml:"browser"`
+			Browser bool   `yaml:"browser"`
+			Image   string `yaml:"image"`
 		}
 		if yaml.Unmarshal(yamlData, &meta) == nil {
 			browserEnabled = meta.Browser
+			if meta.Image != "" {
+				vmImage = meta.Image
+			}
 		}
 	}
 
@@ -94,7 +99,7 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
 		Name:       "lab-" + id[:8],
 		ServerType: m.vmCfg.ServerType,
-		Image:      m.vmCfg.Image,
+		Image:      vmImage,
 		Location:   m.vmCfg.Location,
 		UserData:   userData.String(),
 		SSHKeys:    m.vmCfg.SSHKeyNames,

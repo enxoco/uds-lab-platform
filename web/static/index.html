@@ -33,9 +33,12 @@
 
       scenarios.forEach(s => {
         const card = document.createElement('div');
-        card.className = 'scenario-card';
+        card.className = 'scenario-card' + (s.playground ? ' playground-card' : '');
         card.innerHTML = `
-          <h2>${esc(s.title || s.id)}</h2>
+          <div class="card-header">
+            <h2>${esc(s.title || s.id)}</h2>
+            ${s.playground ? '<span class="tag tag-playground">⬡ Playground</span>' : ''}
+          </div>
           <p>${esc(s.description || '')}</p>
           <div class="scenario-meta">
             ${s.duration ? `<span>⏱ ${s.duration} min</span>` : ''}

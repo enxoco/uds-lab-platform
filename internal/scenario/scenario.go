@@ -24,6 +24,8 @@ type Scenario struct {
 	Tags        []string `yaml:"tags"         json:"tags"`
 	Steps       []Step   `yaml:"steps"        json:"steps"`
 	Browser     bool     `yaml:"browser"      json:"browser"`
+	Playground  bool     `yaml:"playground"   json:"playground"`
+	Image       string   `yaml:"image"        json:"-"`
 }
 
 type Summary struct {
@@ -32,6 +34,7 @@ type Summary struct {
 	Description string `json:"description"`
 	Duration    int    `json:"duration"`
 	Difficulty  string `json:"difficulty"`
+	Playground  bool   `json:"playground"`
 }
 
 func Load(fsys fs.FS, id string) (*Scenario, error) {
@@ -79,6 +82,7 @@ func ListSummaries(fsys fs.FS) ([]Summary, error) {
 			Description: s.Description,
 			Duration:    s.Duration,
 			Difficulty:  s.Difficulty,
+			Playground:  s.Playground,
 		})
 	}
 	return out, nil
