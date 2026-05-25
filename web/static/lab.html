@@ -194,6 +194,26 @@
       });
     }
 
+    // ── VNC links: open *.uds.dev links in VM browser when browser_enabled ──
+    function bindVNCLinks() {
+      document.querySelectorAll('#instructions-body a').forEach(a => {
+        try {
+          const u = new URL(a.href);
+          if (!u.hostname.endsWith('.uds.dev')) return;
+        } catch { return; }
+        a.title = 'Opens in VM browser';
+        a.onclick = (e) => {
+          e.preventDefault();
+          if (!labReady) return;
+          fetch(`/t/${SESSION}/navigate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: a.href }),
+          }).catch(() => {});
+        };
+      });
+    }
+
     // ── Timer ───────────────────────────────────────────────────────────────
     function startTimer() {
       timerInterval = setInterval(() => {
@@ -238,6 +258,7 @@
       nextBtn.textContent = currentStep === steps.length - 1 ? 'Finish' : 'Next →';
       updateDots();
       bindCodeBlocks();
+      bindVNCLinks();
     }
 
     // ── Browser preview ─────────────────────────────────────────────────────

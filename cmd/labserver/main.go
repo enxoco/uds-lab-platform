@@ -109,6 +109,7 @@ func main() {
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
 	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
+	mux.HandleFunc("POST /t/{id}/navigate", srv.navigateBrowser)
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
@@ -230,6 +231,35 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		http.Error(w, "injection failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+	w.WriteHeader(resp.StatusCode)
+}
+
+func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !sess.BrowserEnabled || sess.Status != session.StatusReady {
+		http.Error(w, "browser not available", http.StatusServiceUnavailable)
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "read body failed", http.StatusBadRequest)
+		return
+	}
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Post(
+		fmt.Sprintf("http://%s:7680/navigate", sess.VMIP),
+		"application/json",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		http.Error(w, "navigate failed", http.StatusBadGateway)
 		return
 	}
 	defer resp.Body.Close()

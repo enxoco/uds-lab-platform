@@ -129,6 +129,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(response)
 
+        elif self.path == '/navigate':
+            url = body.get('url', '')
+            try:
+                if url:
+                    subprocess.Popen(
+                        ['chromium-browser', '--new-tab', url],
+                        env={**os.environ, 'DISPLAY': ':99'},
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            except Exception:
+                pass
+            self.send_response(200)
+            self.end_headers()
+
         else:
             self.send_response(404)
             self.end_headers()
