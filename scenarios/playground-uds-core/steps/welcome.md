@@ -8,6 +8,10 @@
 uds zarf tools kubectl get pods -A
 ```
 
+```
+uds zarf tools monitor
+```
+
 ## UDS Core services
 
 | Service | URL |
