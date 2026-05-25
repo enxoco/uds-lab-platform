@@ -4,7 +4,6 @@ duration: 60
 difficulty: beginner
 playground: true
 browser: true
-image: ""
 
 steps:
   - title: "Welcome"

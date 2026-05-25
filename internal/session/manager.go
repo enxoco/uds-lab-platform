@@ -57,17 +57,22 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 
 	// Read flags from scenario.yaml
 	browserEnabled := false
-	vmImage := m.vmCfg.Image
+	isPlayground := false
 	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
 		var meta struct {
-			Browser bool   `yaml:"browser"`
-			Image   string `yaml:"image"`
+			Browser    bool `yaml:"browser"`
+			Playground bool `yaml:"playground"`
 		}
 		if yaml.Unmarshal(yamlData, &meta) == nil {
 			browserEnabled = meta.Browser
-			if meta.Image != "" {
-				vmImage = meta.Image
-			}
+			isPlayground = meta.Playground
+		}
+	}
+
+	vmImage := m.vmCfg.Image
+	if isPlayground {
+		if found, err := m.hcloud.FindLatestSnapshot(ctx, "uds-lab-"+scenario); err == nil && found != "" {
+			vmImage = found
 		}
 	}
 
