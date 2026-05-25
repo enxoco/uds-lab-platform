@@ -87,6 +87,7 @@
     let pollInterval = null;
     let tabs = [];       // [{id, iframe, btn}]
     let activeTab = null;
+    let vncWindow = null;
 
     // ── Init ────────────────────────────────────────────────────────────────
     async function init() {
@@ -207,12 +208,15 @@
           e.preventDefault();
           if (!labReady) return;
           a.classList.add('vnc-link-opening');
-          setTimeout(() => a.classList.remove('vnc-link-opening'), 1000);
-          fetch(`/t/${SESSION}/navigate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url: a.href }),
-          }).catch(() => {});
+          const delay = ensureVNCOpen();
+          setTimeout(() => {
+            a.classList.remove('vnc-link-opening');
+            fetch(`/t/${SESSION}/navigate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: a.href }),
+            }).catch(() => {});
+          }, delay);
         };
       });
     }
@@ -266,7 +270,17 @@
 
     // ── Browser preview ─────────────────────────────────────────────────────
     function openBrowser() {
-      window.open(`/vnc/${SESSION}/vnc_lite.html?autoconnect=true&resize=remote&path=vnc/${SESSION}/websockify`, '_blank');
+      if (!vncWindow || vncWindow.closed) {
+        vncWindow = window.open(`/vnc/${SESSION}/vnc_lite.html?autoconnect=true&resize=remote&path=vnc/${SESSION}/websockify`, '_blank');
+      } else {
+        vncWindow.focus();
+      }
+    }
+
+    function ensureVNCOpen() {
+      const needsOpen = !vncWindow || vncWindow.closed;
+      if (needsOpen) openBrowser();
+      return needsOpen ? 2000 : 0; // delay ms if just opened
     }
 
     // ── Step verification ───────────────────────────────────────────────────
