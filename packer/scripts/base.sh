@@ -288,6 +288,8 @@ ExecStart=/usr/bin/chromium-browser \
   --disable-dev-shm-usage \
   --no-first-run \
   --kiosk \
+  --window-size=1920,1080 \
+  --window-position=0,0 \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
   about:blank
