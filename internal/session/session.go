@@ -13,6 +13,7 @@ const (
 type Session struct {
 	ID             string    `json:"id"`
 	Scenario       string    `json:"scenario"`
+	ClientID       string    `json:"-"`
 	VMID           int64     `json:"-"`
 	VMIP           string    `json:"vm_ip,omitempty"`
 	Status         Status    `json:"status"`

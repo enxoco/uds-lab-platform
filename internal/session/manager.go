@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"log"
 	"net/http"
 	"sync"
 	"text/template"
@@ -25,23 +26,27 @@ type VMConfig struct {
 }
 
 type Manager struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session
-	hcloud   *hetzner.Client
-	ttl      time.Duration
-	vmCfg    VMConfig
+	mu             sync.RWMutex
+	sessions       map[string]*Session
+	clientSessions map[string]string // clientID → sessionID
+	hcloud         *hetzner.Client
+	ttl            time.Duration
+	vmCfg          VMConfig
 }
 
 func NewManager(hcloud *hetzner.Client, ttl time.Duration, vmCfg VMConfig) *Manager {
 	m := &Manager{
-		sessions: make(map[string]*Session),
-		hcloud:   hcloud,
-		ttl:      ttl,
-		vmCfg:    vmCfg,
+		sessions:       make(map[string]*Session),
+		clientSessions: make(map[string]string),
+		hcloud:         hcloud,
+		ttl:            ttl,
+		vmCfg:          vmCfg,
 	}
 	go m.cleanupLoop()
 	return m
 }
+
+var ErrSessionExists = fmt.Errorf("active session already exists")
 
 type userDataInput struct {
 	SetupSh        string
@@ -49,7 +54,16 @@ type userDataInput struct {
 	BrowserEnabled bool
 }
 
-func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Session, error) {
+	m.mu.RLock()
+	if sid, ok := m.clientSessions[clientID]; ok {
+		if _, alive := m.sessions[sid]; alive {
+			m.mu.RUnlock()
+			return nil, ErrSessionExists
+		}
+	}
+	m.mu.RUnlock()
+
 	setupSh, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/setup.sh")
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
@@ -71,10 +85,17 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 
 	vmImage := m.vmCfg.Image
 	if isPlayground {
-		if found, err := m.hcloud.FindLatestSnapshot(ctx, "uds-lab-"+scenario); err == nil && found != "" {
-			vmImage = found
+		prefix := "uds-lab-" + scenario
+		found, err := m.hcloud.FindLatestSnapshot(ctx, prefix)
+		if err != nil {
+			return nil, fmt.Errorf("find snapshot for playground %q: %w", scenario, err)
 		}
+		if found == "" {
+			return nil, fmt.Errorf("no snapshot found with prefix %q — build it first with packer/build-images.sh", prefix)
+		}
+		vmImage = found
 	}
+	log.Printf("create session: scenario=%s image=%s", scenario, vmImage)
 
 	verifyScripts := map[string]string{}
 	if entries, err := fs.ReadDir(m.vmCfg.ScenariosFS, scenario+"/verify"); err == nil {
@@ -116,6 +137,7 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 	s := &Session{
 		ID:             id,
 		Scenario:       scenario,
+		ClientID:       clientID,
 		VMID:           vmID,
 		VMIP:           vmIP,
 		Status:         StatusProvisioning,
@@ -126,6 +148,7 @@ func (m *Manager) Create(ctx context.Context, scenario string) (*Session, error)
 
 	m.mu.Lock()
 	m.sessions[id] = s
+	m.clientSessions[clientID] = id
 	m.mu.Unlock()
 
 	go m.pollReady(s)
@@ -144,6 +167,7 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	s, ok := m.sessions[id]
 	if ok {
 		delete(m.sessions, id)
+		delete(m.clientSessions, s.ClientID)
 	}
 	m.mu.Unlock()
 
@@ -198,6 +222,9 @@ func (m *Manager) cleanupLoop() {
 		m.mu.Unlock()
 
 		for _, s := range expired {
+			m.mu.Lock()
+			delete(m.clientSessions, s.ClientID)
+			m.mu.Unlock()
 			_ = m.hcloud.DeleteServer(context.Background(), s.VMID)
 		}
 	}

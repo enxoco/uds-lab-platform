@@ -20,6 +20,7 @@ import (
 	"github.com/defenseunicorns/uds-lab-platform/internal/proxy"
 	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
 	"github.com/defenseunicorns/uds-lab-platform/internal/session"
+	"github.com/google/uuid"
 )
 
 type server struct {
@@ -145,8 +146,13 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sess, err := s.mgr.Create(r.Context(), req.Scenario)
+	cid := clientID(w, r)
+	sess, err := s.mgr.Create(r.Context(), cid, req.Scenario)
 	if err != nil {
+		if err == session.ErrSessionExists {
+			jsonError(w, "you already have an active lab session", http.StatusConflict)
+			return
+		}
 		log.Printf("create session: %v", err)
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -279,6 +285,25 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// clientID returns a stable client identifier from the lab_client_id cookie,
+// setting a new one if absent. Swap this for a GitHub user ID when auth lands.
+func clientID(w http.ResponseWriter, r *http.Request) string {
+	const cookieName = "lab_client_id"
+	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
+		return c.Value
+	}
+	id := uuid.New().String()
+	http.SetCookie(w, &http.Cookie{
+		Name:     cookieName,
+		Value:    id,
+		Path:     "/",
+		MaxAge:   86400 * 30,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+	return id
 }
 
 func envOr(key, def string) string {

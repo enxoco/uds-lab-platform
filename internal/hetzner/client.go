@@ -43,7 +43,7 @@ type createServerResponse struct {
 // snapshot whose name starts with prefix. Returns "" if none found.
 func (c *Client) FindLatestSnapshot(ctx context.Context, prefix string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		apiBase+"/images?type=snapshot&sort=created:desc", nil)
+		apiBase+"/images?type=snapshot&sort=created:desc&per_page=50", nil)
 	if err != nil {
 		return "", err
 	}

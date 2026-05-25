@@ -60,6 +60,11 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ scenario: scenarioId }),
         });
+        if (res.status === 409) {
+          alert('You already have an active lab session. End it before starting a new one.');
+          load();
+          return;
+        }
         if (!res.ok) throw new Error(await res.text());
         const session = await res.json();
         window.location.href = `/lab.html?session=${session.id}&scenario=${scenarioId}`;
