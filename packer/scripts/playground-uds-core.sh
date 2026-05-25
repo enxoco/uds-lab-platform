@@ -1,6 +1,7 @@
 #!/bin/bash
-# Builds the UDS Core playground image. Deploys k3d-core-slim-dev on top
-# of the tools playground image, then snapshots the running cluster state.
+# Builds the UDS Core playground image. Deploys k3d-core-slim-dev, waits
+# for all pods to be ready, then stops the cluster cleanly before snapshot.
+# On boot, setup.sh runs k3d cluster start for clean ordered startup.
 set -euo pipefail
 
 export HOME=/root
@@ -16,17 +17,17 @@ sleep 5
 log "Deploying k3d-core-slim-dev (this takes several minutes)..."
 uds deploy k3d-core-slim-dev:latest --confirm 2>&1 | tee /var/log/uds-core-deploy.log
 
-log "Verifying cluster..."
-uds zarf tools kubectl get nodes
-uds zarf tools kubectl get pods -A | head -30
+# ── Wait for all pods to be ready ─────────────────────────────────────────────
+log "Waiting for all pods to be ready..."
+uds zarf tools kubectl wait --for=condition=Ready pods --all --all-namespaces --timeout=300s
 
-# ── Persist kubeconfig ─────────────────────────────────────────────────────────
-mkdir -p /root/.kube
-uds zarf tools kubectl config view --raw > /root/.kube/config
-chmod 600 /root/.kube/config
+log "Cluster state:"
+uds zarf tools kubectl get pods -A
 
-# ── Mark as pre-provisioned ────────────────────────────────────────────────────
-mkdir -p /var/log/lab-setup
-touch /var/log/lab-setup/ready
+# ── Stop cluster cleanly before snapshot ──────────────────────────────────────
+# Stopped cluster starts cleanly on boot via k3d cluster start — avoids
+# crash loops from Docker restarting containers in arbitrary order.
+log "Stopping cluster cleanly for snapshot..."
+k3d cluster stop uds
 
 log "UDS Core playground build complete."
