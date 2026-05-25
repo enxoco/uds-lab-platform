@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 )
 
 const apiBase = "https://api.hetzner.cloud/v1"
@@ -40,10 +41,11 @@ type createServerResponse struct {
 }
 
 // FindLatestSnapshot returns the numeric ID of the most recently created
-// snapshot whose name starts with prefix. Returns "" if none found.
-func (c *Client) FindLatestSnapshot(ctx context.Context, prefix string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
-		apiBase+"/images?type=snapshot&sort=created:desc&per_page=50", nil)
+// snapshot matching labelSelector (e.g. "role=uds-lab-playground,tier=tools").
+// Returns "" if none found.
+func (c *Client) FindLatestSnapshot(ctx context.Context, labelSelector string) (string, error) {
+	u := apiBase + "/images?type=snapshot&sort=created:desc&per_page=50&label_selector=" + url.QueryEscape(labelSelector)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return "", err
 	}
@@ -55,19 +57,16 @@ func (c *Client) FindLatestSnapshot(ctx context.Context, prefix string) (string,
 	defer resp.Body.Close()
 	var out struct {
 		Images []struct {
-			ID   int64  `json:"id"`
-			Name string `json:"name"`
+			ID int64 `json:"id"`
 		} `json:"images"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return "", err
 	}
-	for _, img := range out.Images {
-		if len(img.Name) >= len(prefix) && img.Name[:len(prefix)] == prefix {
-			return fmt.Sprintf("%d", img.ID), nil
-		}
+	if len(out.Images) == 0 {
+		return "", nil
 	}
-	return "", nil
+	return fmt.Sprintf("%d", out.Images[0].ID), nil
 }
 
 func (c *Client) resolveImageID(ctx context.Context, nameOrID string) (string, error) {

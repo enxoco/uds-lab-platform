@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"text/template"
 	"time"
@@ -85,13 +86,17 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 
 	vmImage := m.vmCfg.Image
 	if isPlayground {
-		prefix := "uds-lab-" + scenario
-		found, err := m.hcloud.FindLatestSnapshot(ctx, prefix)
+		// Derive label selector from scenario ID:
+		// "playground-tools"    → "role=uds-lab-playground,tier=tools"
+		// "playground-uds-core" → "role=uds-lab-playground,tier=uds-core"
+		tier := strings.TrimPrefix(scenario, "playground-")
+		labelSelector := "role=uds-lab-playground,tier=" + tier
+		found, err := m.hcloud.FindLatestSnapshot(ctx, labelSelector)
 		if err != nil {
 			return nil, fmt.Errorf("find snapshot for playground %q: %w", scenario, err)
 		}
 		if found == "" {
-			return nil, fmt.Errorf("no snapshot found with prefix %q — build it first with packer/build-images.sh", prefix)
+			return nil, fmt.Errorf("no snapshot found matching labels %q — build it first with packer/build-images.sh", labelSelector)
 		}
 		vmImage = found
 	}
