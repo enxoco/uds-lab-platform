@@ -88,6 +88,35 @@ import http.server
 import subprocess
 import json
 import os
+import socket
+import struct
+import urllib.request
+
+def cdp_navigate(url):
+    targets = json.loads(urllib.request.urlopen('http://127.0.0.1:9222/json').read())
+    pages = [t for t in targets if t.get('type') == 'page']
+    if not pages:
+        return
+    ws_url = pages[0]['webSocketDebuggerUrl'].replace('ws://', '')
+    host_port, path = ws_url.split('/', 1)
+    path = '/' + path
+    sock = socket.create_connection(('127.0.0.1', 9222), timeout=3)
+    key = __import__('base64').b64encode(os.urandom(16)).decode()
+    sock.sendall((
+        f'GET {path} HTTP/1.1\r\nHost: 127.0.0.1:9222\r\n'
+        f'Upgrade: websocket\r\nConnection: Upgrade\r\n'
+        f'Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n'
+    ).encode())
+    buf = b''
+    while b'\r\n\r\n' not in buf:
+        buf += sock.recv(4096)
+    msg = json.dumps({'id': 1, 'method': 'Page.navigate', 'params': {'url': url}}).encode()
+    mask = os.urandom(4)
+    masked = bytes([b ^ mask[i % 4] for i, b in enumerate(msg)])
+    n = len(msg)
+    header = bytes([0x81, 0x80 | n]) if n < 126 else bytes([0x81, 0xFE]) + struct.pack('>H', n)
+    sock.sendall(header + mask + masked)
+    sock.close()
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
@@ -131,17 +160,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         elif self.path == '/navigate':
             url = body.get('url', '')
-            try:
-                if url:
-                    subprocess.Popen(
-                        ['chromium-browser', '--no-sandbox', '--disable-gpu',
-                         '--disable-dev-shm-usage', url],
-                        env={**os.environ, 'DISPLAY': ':99', 'HOME': '/root'},
-                        stdout=subprocess.DEVNULL,
-                        stderr=subprocess.DEVNULL,
-                    )
-            except Exception:
-                pass
+            if url:
+                try:
+                    cdp_navigate(url)
+                except Exception:
+                    pass
             self.send_response(200)
             self.end_headers()
 
@@ -264,8 +287,9 @@ ExecStart=/usr/bin/chromium-browser \
   --disable-gpu \
   --disable-dev-shm-usage \
   --no-first-run \
-  --window-size=1920,1080 \
-  --start-maximized \
+  --kiosk \
+  --remote-debugging-port=9222 \
+  --remote-debugging-address=127.0.0.1 \
   about:blank
 Restart=always
 RestartSec=5
