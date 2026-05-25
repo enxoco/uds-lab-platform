@@ -27,6 +27,13 @@ VERIFY_EOF
 chmod +x "$SCENARIO_DIR/verify/{{$name}}"
 {{end}}
 
+# ── Input injection + verify server ───────────────────────────────────────────
+log "Writing lab-inject.py..."
+cat > /opt/lab-inject.py << 'INJECT_EOF'
+{{.InjectPy}}
+INJECT_EOF
+chmod +x /opt/lab-inject.py
+
 # ── Start tmux session ─────────────────────────────────────────────────────────
 touch /var/log/lab-setup/uds-setup.log
 log "Starting tmux session 'main'..."

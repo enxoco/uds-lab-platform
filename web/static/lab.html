@@ -44,6 +44,13 @@
         </div>
       </div>
       <div class="instructions-body" id="instructions-body"></div>
+      <div class="services-section" id="services-section" style="display:none;">
+        <div class="services-header" onclick="toggleServices()">
+          <span>⬡ Services</span>
+          <span id="services-chevron">▸</span>
+        </div>
+        <div class="services-list" id="services-list"></div>
+      </div>
       <div class="instructions-footer">
         <button class="btn btn-ghost" id="prev-btn" onclick="prevStep()">← Prev</button>
         <div class="step-dots" id="step-dots"></div>
@@ -60,6 +67,7 @@
         <div class="tab-bar" id="tab-bar"></div>
         <button class="tab-add" id="tab-add" onclick="addTab()" title="New terminal" disabled>+</button>
         <span style="flex:1"></span>
+        <div id="service-chips" style="display:flex;align-items:stretch;gap:0;"></div>
         <button class="btn-browser" id="browser-btn" onclick="openBrowser()" style="display:none;" title="Open browser preview">⬡ Browser</button>
         <span style="font-size:12px;color:var(--text-muted);" id="terminal-status">Provisioning VM…</span>
       </div>
@@ -88,6 +96,8 @@
     let tabs = [];       // [{id, iframe, btn}]
     let activeTab = null;
     let vncWindow = null;
+    let servicesPollInterval = null;
+    let servicesOpen = true;
 
     // ── Init ────────────────────────────────────────────────────────────────
     async function init() {
@@ -171,6 +181,7 @@
           }
           showStep(currentStep); // re-render to enable nav buttons
           addTab(); // open first tab
+          if (sess.browser_enabled) startServicesPoll();
         } else {
           document.getElementById('loading-text').textContent =
             'Provisioning lab environment… (this takes ~60–90 seconds)';
@@ -283,6 +294,81 @@
       return needsOpen ? 2000 : 0; // delay ms if just opened
     }
 
+    // ── Services ────────────────────────────────────────────────────────────
+    function startServicesPoll() {
+      fetchServices();
+      servicesPollInterval = setInterval(async () => {
+        const done = await fetchServices();
+        if (done) clearInterval(servicesPollInterval);
+      }, 10000);
+    }
+
+    async function fetchServices() {
+      try {
+        const services = await fetch(`/api/sessions/${SESSION}/services`).then(r => r.json());
+        if (services && services.length > 0) {
+          renderServices(services);
+          return true;
+        }
+      } catch {}
+      return false;
+    }
+
+    function renderServices(services) {
+      // Instructions panel section
+      const section = document.getElementById('services-section');
+      const list = document.getElementById('services-list');
+      list.innerHTML = '';
+      services.forEach(svc => {
+        const a = document.createElement('a');
+        a.href = svc.url;
+        a.textContent = svc.label;
+        a.className = 'service-link vnc-link';
+        a.onclick = (e) => {
+          e.preventDefault();
+          if (!labReady) return;
+          const delay = ensureVNCOpen();
+          setTimeout(() => {
+            fetch(`/t/${SESSION}/navigate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: svc.url }),
+            }).catch(() => {});
+          }, delay);
+        };
+        list.appendChild(a);
+      });
+      section.style.display = 'block';
+
+      // Terminal header chips
+      const chips = document.getElementById('service-chips');
+      chips.innerHTML = '';
+      services.forEach(svc => {
+        const btn = document.createElement('button');
+        btn.className = 'service-chip';
+        btn.textContent = svc.label;
+        btn.title = svc.url;
+        btn.onclick = () => {
+          if (!labReady) return;
+          const delay = ensureVNCOpen();
+          setTimeout(() => {
+            fetch(`/t/${SESSION}/navigate`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ url: svc.url }),
+            }).catch(() => {});
+          }, delay);
+        };
+        chips.appendChild(btn);
+      });
+    }
+
+    function toggleServices() {
+      servicesOpen = !servicesOpen;
+      document.getElementById('services-list').style.display = servicesOpen ? 'flex' : 'none';
+      document.getElementById('services-chevron').textContent = servicesOpen ? '▾' : '▸';
+    }
+
     // ── Step verification ───────────────────────────────────────────────────
     async function checkStep() {
       const btn = document.getElementById('check-btn');
@@ -346,6 +432,7 @@
       document.getElementById('teardown-overlay').style.display = 'flex';
       clearInterval(timerInterval);
       clearInterval(pollInterval);
+      clearInterval(servicesPollInterval);
       await fetch(`/api/sessions/${SESSION}`, { method: 'DELETE' }).catch(() => {});
       location.href = '/';
     }

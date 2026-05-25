@@ -7,6 +7,11 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+type ServiceLink struct {
+	Label string `yaml:"label" json:"label"`
+	URL   string `yaml:"url"   json:"url"`
+}
+
 type Step struct {
 	Title     string `yaml:"title"  json:"title"`
 	Text      string `yaml:"text"   json:"-"`
@@ -23,8 +28,9 @@ type Scenario struct {
 	Difficulty  string   `yaml:"difficulty"   json:"difficulty"`
 	Tags        []string `yaml:"tags"         json:"tags"`
 	Steps       []Step   `yaml:"steps"        json:"steps"`
-	Browser     bool     `yaml:"browser"      json:"browser"`
-	Playground  bool     `yaml:"playground"   json:"playground"`
+	Browser     bool          `yaml:"browser"      json:"browser"`
+	Playground  bool          `yaml:"playground"   json:"playground"`
+	Services    []ServiceLink `yaml:"services"     json:"services"`
 }
 
 type Summary struct {

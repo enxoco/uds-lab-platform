@@ -86,6 +86,10 @@ func main() {
 	if err != nil {
 		log.Fatalf("parse user-data template: %v", err)
 	}
+	injectPy, err := fs.ReadFile(vmFS, "lab-inject.py")
+	if err != nil {
+		log.Fatalf("load lab-inject.py: %v", err)
+	}
 
 	mgr := session.NewManager(
 		hetzner.New(hcloudToken),
@@ -97,6 +101,7 @@ func main() {
 			SSHKeyNames:  []string{"local"},
 			UserDataTmpl: udTmpl,
 			ScenariosFS:  scenariosFS,
+			InjectPy:     string(injectPy),
 		},
 	)
 
@@ -111,6 +116,7 @@ func main() {
 	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
 	mux.HandleFunc("POST /t/{id}/navigate", srv.navigateBrowser)
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
+	mux.HandleFunc("GET /api/sessions/{id}/services", srv.sessionServices)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
@@ -264,6 +270,47 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 	w.WriteHeader(resp.StatusCode)
+}
+
+func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
+	sess, ok := s.mgr.Get(r.PathValue("id"))
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+
+	// Scenario-defined services (explicit, ordered first)
+	sc, err := scenario.Load(s.scenariosFS, sess.Scenario)
+	var services []scenario.ServiceLink
+	if err == nil && len(sc.Services) > 0 {
+		services = sc.Services
+	}
+
+	// Auto-detect from cluster VirtualServices
+	if sess.BrowserEnabled && sess.Status == session.StatusReady {
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(fmt.Sprintf("http://%s:7680/services", sess.VMIP))
+		if err == nil {
+			defer resp.Body.Close()
+			var detected []scenario.ServiceLink
+			if json.NewDecoder(resp.Body).Decode(&detected) == nil {
+				existing := make(map[string]bool, len(services))
+				for _, svc := range services {
+					existing[svc.URL] = true
+				}
+				for _, d := range detected {
+					if !existing[d.URL] {
+						services = append(services, d)
+					}
+				}
+			}
+		}
+	}
+
+	if services == nil {
+		services = []scenario.ServiceLink{}
+	}
+	jsonOK(w, services)
 }
 
 func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {

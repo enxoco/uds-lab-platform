@@ -24,6 +24,7 @@ type VMConfig struct {
 	SSHKeyNames  []string
 	UserDataTmpl *template.Template
 	ScenariosFS  fs.FS
+	InjectPy     string
 }
 
 type Manager struct {
@@ -53,6 +54,7 @@ type userDataInput struct {
 	SetupSh        string
 	VerifyScripts  map[string]string
 	BrowserEnabled bool
+	InjectPy       string
 }
 
 func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Session, error) {
@@ -120,6 +122,7 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 		SetupSh:        string(setupSh),
 		VerifyScripts:  verifyScripts,
 		BrowserEnabled: browserEnabled,
+		InjectPy:       m.vmCfg.InjectPy,
 	}); err != nil {
 		return nil, fmt.Errorf("render user-data: %w", err)
 	}
