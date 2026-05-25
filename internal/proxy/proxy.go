@@ -11,8 +11,7 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	CheckOrigin:  func(r *http.Request) bool { return true },
-	Subprotocols: []string{"tty"},
+	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
 // Handler proxies HTTP and WebSocket traffic to target, stripping prefix.
@@ -35,16 +34,27 @@ func Handler(target string, stripPrefix string) http.Handler {
 }
 
 func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
-	upstream, _, err := websocket.DefaultDialer.Dial(targetWS, http.Header{
-		"Sec-WebSocket-Protocol": []string{"tty"},
-	})
+	subprotocols := websocket.Subprotocols(r)
+	dialHeader := http.Header{}
+	if len(subprotocols) > 0 {
+		dialHeader.Set("Sec-WebSocket-Protocol", strings.Join(subprotocols, ", "))
+	}
+	upstream, upstreamResp, err := websocket.DefaultDialer.Dial(targetWS, dialHeader)
 	if err != nil {
 		http.Error(w, "terminal not ready", http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
 
-	client, err := upgrader.Upgrade(w, r, nil)
+	var respHeader http.Header
+	if proto := upstreamResp.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
+		respHeader = http.Header{"Sec-WebSocket-Protocol": []string{proto}}
+	}
+	u := websocket.Upgrader{
+		CheckOrigin:  func(r *http.Request) bool { return true },
+		Subprotocols: subprotocols,
+	}
+	client, err := u.Upgrade(w, r, respHeader)
 	if err != nil {
 		return
 	}

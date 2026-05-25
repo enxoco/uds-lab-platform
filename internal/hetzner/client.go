@@ -39,7 +39,40 @@ type createServerResponse struct {
 	} `json:"server"`
 }
 
+func (c *Client) resolveImageID(ctx context.Context, nameOrID string) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		apiBase+"/images?name="+nameOrID+"&type=snapshot", nil)
+	if err != nil {
+		return "", err
+	}
+	c.setHeaders(req)
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Images []struct {
+			ID   int64  `json:"id"`
+			Name string `json:"name"`
+		} `json:"images"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return "", err
+	}
+	if len(out.Images) > 0 {
+		return fmt.Sprintf("%d", out.Images[0].ID), nil
+	}
+	return nameOrID, nil
+}
+
 func (c *Client) CreateServer(ctx context.Context, req CreateServerRequest) (id int64, ip string, err error) {
+	imageID, err := c.resolveImageID(ctx, req.Image)
+	if err != nil {
+		return 0, "", fmt.Errorf("resolve image: %w", err)
+	}
+	req.Image = imageID
+
 	body, err := json.Marshal(req)
 	if err != nil {
 		return 0, "", err
