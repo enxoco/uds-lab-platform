@@ -39,22 +39,18 @@ func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
 	if len(subprotocols) > 0 {
 		dialHeader.Set("Sec-WebSocket-Protocol", strings.Join(subprotocols, ", "))
 	}
-	upstream, upstreamResp, err := websocket.DefaultDialer.Dial(targetWS, dialHeader)
+	upstream, _, err := websocket.DefaultDialer.Dial(targetWS, dialHeader)
 	if err != nil {
 		http.Error(w, "terminal not ready", http.StatusBadGateway)
 		return
 	}
 	defer upstream.Close()
 
-	var respHeader http.Header
-	if proto := upstreamResp.Header.Get("Sec-WebSocket-Protocol"); proto != "" {
-		respHeader = http.Header{"Sec-WebSocket-Protocol": []string{proto}}
-	}
 	u := websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
 		Subprotocols: subprotocols,
 	}
-	client, err := u.Upgrade(w, r, respHeader)
+	client, err := u.Upgrade(w, r, nil)
 	if err != nil {
 		return
 	}
