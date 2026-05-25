@@ -322,7 +322,7 @@
       services.forEach(svc => {
         const a = document.createElement('a');
         a.href = svc.url;
-        a.textContent = svc.label;
+        a.textContent = svc.url;
         a.className = 'service-link vnc-link';
         a.onclick = (e) => {
           e.preventDefault();
@@ -346,8 +346,8 @@
       services.forEach(svc => {
         const btn = document.createElement('button');
         btn.className = 'service-chip';
-        btn.textContent = svc.label;
-        btn.title = svc.url;
+        btn.textContent = svc.url;
+        btn.title = svc.label;
         btn.onclick = () => {
           if (!labReady) return;
           const delay = ensureVNCOpen();
