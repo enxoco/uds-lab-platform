@@ -134,8 +134,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             try:
                 if url:
                     subprocess.Popen(
-                        ['chromium-browser', '--new-tab', url],
-                        env={**os.environ, 'DISPLAY': ':99'},
+                        ['chromium-browser', '--no-sandbox', '--disable-gpu',
+                         '--disable-dev-shm-usage', url],
+                        env={**os.environ, 'DISPLAY': ':99', 'HOME': '/root'},
                         stdout=subprocess.DEVNULL,
                         stderr=subprocess.DEVNULL,
                     )
@@ -211,7 +212,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/Xvfb :99 -screen 0 1280x800x24 -ac
+ExecStart=/usr/bin/Xvfb :99 -screen 0 1920x1080x24 -ac
 Restart=always
 RestartSec=3
 
@@ -263,7 +264,7 @@ ExecStart=/usr/bin/chromium-browser \
   --disable-gpu \
   --disable-dev-shm-usage \
   --no-first-run \
-  --window-size=1280,800 \
+  --window-size=1920,1080 \
   --start-maximized \
   about:blank
 Restart=always

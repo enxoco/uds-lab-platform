@@ -271,7 +271,7 @@
     // ── Browser preview ─────────────────────────────────────────────────────
     function openBrowser() {
       if (!vncWindow || vncWindow.closed) {
-        vncWindow = window.open(`/vnc/${SESSION}/vnc_lite.html?autoconnect=true&resize=remote&path=vnc/${SESSION}/websockify`, '_blank');
+        vncWindow = window.open(`/vnc/${SESSION}/vnc_lite.html?autoconnect=true&resize=scale&path=vnc/${SESSION}/websockify`, '_blank');
       } else {
         vncWindow.focus();
       }
