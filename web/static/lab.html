@@ -12,7 +12,7 @@
     <a class="logo" href="/">UDS Labs</a>
     <span id="scenario-title" style="color:var(--text-muted);font-size:13px;"></span>
     <span style="flex:1"></span>
-    <span class="timer" id="timer">60:00</span>
+    <span class="timer" id="timer">--:--</span>
     <button class="btn btn-danger" id="end-btn" onclick="confirmEnd()">End Lab</button>
   </nav>
 
@@ -233,16 +233,23 @@
     }
 
     // ── Timer ───────────────────────────────────────────────────────────────
+    function timerTick() {
+      const remaining = Math.max(0, expiresAt - Date.now());
+      const totalSecs = Math.floor(remaining / 1000);
+      const h = Math.floor(totalSecs / 3600);
+      const m = Math.floor((totalSecs % 3600) / 60);
+      const s = totalSecs % 60;
+      const el = document.getElementById('timer');
+      el.textContent = h > 0
+        ? `${h}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`
+        : `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+      el.className = 'timer' + (m < 5 && h === 0 ? ' danger' : (m < 15 && h === 0) ? ' warn' : '');
+      if (remaining === 0) { clearInterval(timerInterval); endLab(); }
+    }
+
     function startTimer() {
-      timerInterval = setInterval(() => {
-        const remaining = Math.max(0, expiresAt - Date.now());
-        const m = Math.floor(remaining / 60000);
-        const s = Math.floor((remaining % 60000) / 1000);
-        const el = document.getElementById('timer');
-        el.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-        el.className = 'timer' + (m < 5 ? ' danger' : m < 15 ? ' warn' : '');
-        if (remaining === 0) { clearInterval(timerInterval); endLab(); }
-      }, 1000);
+      timerTick();
+      timerInterval = setInterval(timerTick, 1000);
     }
 
     // ── Steps ───────────────────────────────────────────────────────────────

@@ -60,6 +60,8 @@ uds version
 
 ```
 echo 'alias kubectl="uds zarf tools kubectl"' >> ~/.bashrc && echo 'alias k="uds zarf tools kubectl"' >> ~/.bashrc && source ~/.bashrc
+echo 'alias zarf="uds zarf"' >> ~/.bashrc
+
 ```
 
 ## Verify
