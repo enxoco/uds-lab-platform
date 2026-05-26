@@ -30,6 +30,7 @@ type Scenario struct {
 	Steps       []Step   `yaml:"steps"        json:"steps"`
 	Browser     bool          `yaml:"browser"      json:"browser"`
 	Playground  bool          `yaml:"playground"   json:"playground"`
+	Image       string        `yaml:"image"        json:"image,omitempty"`
 	Services    []ServiceLink `yaml:"services"     json:"services"`
 }
 

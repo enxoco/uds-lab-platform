@@ -1,0 +1,29 @@
+title: "UDS Reference Package: The Standard for UDS Packages"
+description: "Explore and deploy the UDS Reference Package — the canonical example of how to structure a UDS package with Zarf, Keycloak SSO, Postgres, Istio, and Pepr policy enforcement."
+duration: 45
+difficulty: beginner
+browser: true
+image: uds-core
+tags:
+  - uds
+  - zarf
+  - istio
+  - keycloak
+  - pepr
+  - postgres
+steps:
+  - title: "Clone and explore zarf.yaml"
+    text: steps/1-explore-zarf.md
+    verify: verify/step1.sh
+  - title: "Bundle layer: dependencies at the right layer"
+    text: steps/2-bundle-layer.md
+    verify: verify/step2.sh
+  - title: "The UDS Package CR"
+    text: steps/3-uds-package-cr.md
+    verify: verify/step3.sh
+  - title: "Deploy with uds run dev"
+    text: steps/4-deploy.md
+    verify: verify/step4.sh
+  - title: "Verify integrations"
+    text: steps/5-verify.md
+    verify: verify/step5.sh

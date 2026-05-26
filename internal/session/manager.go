@@ -75,14 +75,17 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	// Read flags from scenario.yaml
 	browserEnabled := false
 	isPlayground := false
+	imageOverride := ""
 	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
 		var meta struct {
-			Browser    bool `yaml:"browser"`
-			Playground bool `yaml:"playground"`
+			Browser    bool   `yaml:"browser"`
+			Playground bool   `yaml:"playground"`
+			Image      string `yaml:"image"`
 		}
 		if yaml.Unmarshal(yamlData, &meta) == nil {
 			browserEnabled = meta.Browser
 			isPlayground = meta.Playground
+			imageOverride = meta.Image
 		}
 	}
 
@@ -90,7 +93,9 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 
 	var labelSelector string
 
-	if isPlayground {
+	if imageOverride != "" {
+		labelSelector = "role=uds-lab-playground,tier=" + imageOverride
+	} else if isPlayground {
 		tier := strings.TrimPrefix(scenario, "playground-")
 		labelSelector = "role=uds-lab-playground,tier=" + tier
 	} else {

@@ -62,6 +62,13 @@ An engineer who writes Scenarios or Playgrounds. Currently an internal Defense U
 
 ---
 
+## Reference Artifacts
+
+### Reference Package
+The canonical UDS package maintained by Defense Unicorns at `github.com/uds-packages/reference-package`. Demonstrates best practices for structuring a UDS package: app-only `zarf.yaml`, infrastructure dependencies at the bundle layer, UDS Package CR with SSO/network/monitoring, and `uds run dev` as the development workflow. ISVs use it as the authoritative template.
+
+---
+
 ## Services & Browser
 
 ### Service
