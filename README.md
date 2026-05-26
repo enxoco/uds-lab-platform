@@ -7,21 +7,23 @@ Browser-based interactive lab environment for UDS and Zarf. Provisions ephemeral
 ```
 Browser
   │
-  ├── GET /                         → catalog (index.html)
-  ├── GET /lab.html                 → lab UI (instructions + terminal)
-  ├── POST /api/sessions            → provision Hetzner VM
-  ├── GET  /api/sessions/{id}       → poll VM status
-  ├── DELETE /api/sessions/{id}     → destroy VM
-  ├── /t/{id}/                      → WebSocket proxy → VM:7681 (ttyd + tmux)
-  ├── /t/{id}/shell/                → WebSocket proxy → VM:7682 (ttyd direct bash)
-  ├── /t/{id}/cmd POST              → HTTP proxy → VM:7680/cmd (tmux inject)
-  ├── /api/sessions/{id}/verify/{n} → VM:7680/verify (run verify script)
-  └── /vnc/{id}/                    → WebSocket proxy → VM:6080 (noVNC/websockify)
+  ├── GET /                          → catalog (index.html)
+  ├── GET /lab.html                  → lab UI (instructions + terminal)
+  ├── POST /api/sessions             → provision Hetzner VM
+  ├── GET  /api/sessions/{id}        → poll VM status
+  ├── DELETE /api/sessions/{id}      → destroy VM
+  ├── POST /api/sessions/{id}/verify/{n} → run verify script on VM
+  ├── /t/{id}/                       → WebSocket proxy → VM:7681 (ttyd + tmux)
+  ├── /t/{id}/shell/                 → WebSocket proxy → VM:7682 (ttyd direct bash)
+  ├── /t/{id}/cmd POST               → HTTP proxy → VM:7680/cmd (tmux inject)
+  ├── /t/{id}/navigate POST          → HTTP proxy → VM:7680/navigate (VM browser)
+  ├── GET /api/sessions/{id}/services → scenario services + VM auto-detect
+  └── /vnc/{id}/                     → WebSocket proxy → VM:6080 (noVNC/websockify)
 
 Hetzner VM (boots from pre-built snapshot)
   ├── ttyd :7681   — tmux main session (setup-aware entry)
   ├── ttyd :7682   — direct root bash
-  ├── Python :7680 — lab-inject.py (cmd + verify endpoints)
+  ├── Python :7680 — lab-inject.py (cmd, verify, navigate, services endpoints)
   └── noVNC :6080  — Xvfb + x11vnc + websockify + Chromium (browser: true only)
 ```
 
@@ -83,13 +85,13 @@ cd packer
 HCLOUD_TOKEN=<token> ./build-images.sh
 ```
 
-Builds three images in order and automatically updates `image:` in the playground scenario.yaml files:
+Builds three images in order. Playground snapshots are tagged with Hetzner labels and auto-discovered at session creation — no manual config needed.
 
-| Image | Contents |
-|-------|----------|
-| `uds-lab-base` | Ubuntu 24.04 + tmux, ttyd, noVNC, Chromium, Python inject server, systemd units |
-| `uds-lab-playground-tools` | Base + Docker, k3d, uds CLI, neovim, jq, yq, yamllint |
-| `uds-lab-playground-uds-core` | Tools + k3d-core-slim-dev fully deployed |
+| Image | Labels | Contents |
+|-------|--------|----------|
+| `uds-lab-base` | `role=uds-lab-base` | Ubuntu 24.04 + tmux, ttyd, noVNC, Chromium, Python inject server, systemd units |
+| `uds-lab-playground-tools` | `role=uds-lab-playground,tier=tools` | Base + Docker, k3d, uds CLI, neovim, jq, yq, yamllint |
+| `uds-lab-playground-uds-core` | `role=uds-lab-playground,tier=uds-core` | Tools + k3d-core-slim-dev fully deployed |
 
 The UDS Core image build takes ~15 minutes.
 
@@ -104,6 +106,11 @@ SKIP_BASE=1 BASE_IMAGE=uds-lab-base-20260101-120000 \
 SKIP_BASE=1 SKIP_TOOLS=1 \
   BASE_IMAGE=uds-lab-base-20260101-120000 \
   TOOLS_IMAGE=uds-lab-playground-tools-20260101-120000 \
+  HCLOUD_TOKEN=<token> ./build-images.sh
+
+# Rebuild only uds-core playground (skip base + tools)
+SKIP_BASE=1 SKIP_TOOLS=1 SKIP_UDS_CORE=0 \
+  BASE_IMAGE=... TOOLS_IMAGE=... \
   HCLOUD_TOKEN=<token> ./build-images.sh
 ```
 
@@ -146,8 +153,8 @@ description: "What this lab teaches."
 duration: 45          # minutes shown in catalog
 difficulty: beginner  # beginner | intermediate | advanced
 browser: false        # true = provision Chromium + noVNC on the VM
-playground: false     # true = shows Playground badge in catalog
-image: ""             # optional: snapshot name, overrides VM_IMAGE default
+playground: false     # true = shows Playground badge; image auto-discovered by label
+image: ""             # optional: snapshot name/ID, overrides VM_IMAGE env var
 
 steps:
   - title: "Step one"
@@ -155,6 +162,18 @@ steps:
     verify: step1.sh   # omit if no verification for this step
   - title: "Step two"
     text: steps/step2.md
+```
+
+Playground scenarios (`playground: true`) do not need `image:` — the server queries Hetzner for the most recent snapshot with labels `role=uds-lab-playground,tier=<scenario-suffix>`. For example, scenario `playground-uds-core` looks for `tier=uds-core`.
+
+**Services** (`services:`) declares named URLs that appear as clickable chips in the terminal header and a collapsible panel in the instructions sidebar. Clicking any service chip opens it in the VM browser (requires `browser: true`). Scenario-defined services are merged with any URLs auto-detected from the VM at `/api/sessions/{id}/services`.
+
+```yaml
+services:
+  - label: "SSO (Keycloak)"
+    url: "https://sso.uds.dev"
+  - label: "Grafana"
+    url: "https://grafana.admin.uds.dev"
 ```
 
 ### setup.sh
@@ -173,7 +192,13 @@ touch /var/log/lab-setup/ready
 
 ### Step markdown
 
-Standard markdown rendered in the instructions panel. Code blocks are clickable — clicking sends the block to the tmux session via the injection server. The "⬡ Browser" button appears in the terminal header when `browser: true`.
+Standard markdown rendered in the instructions panel.
+
+**Click-to-run code blocks** — clicking any fenced code block sends it to the tmux session via the injection server.
+
+**VNC link interception** — any link to a `*.uds.dev` hostname is tagged with a ⬡ indicator. Clicking it automatically opens the VM browser (noVNC) and navigates to that URL inside the VM. Links must use explicit markdown syntax (`[https://sso.uds.dev](https://sso.uds.dev)`) — bare URLs in tables are not autolinked.
+
+The **⬡ Browser** button in the terminal header opens the noVNC window manually. Only visible when `browser: true`.
 
 ### Verify scripts
 
@@ -188,22 +213,49 @@ uds zarf tools kubectl get ns my-namespace &>/dev/null
 
 ## Creating a Playground Scenario
 
-Playground scenarios boot from a pre-provisioned snapshot so the VM is ready immediately. Set `playground: true` and `image:` to the snapshot name. The `build-images.sh` script sets `image:` automatically.
+Playground scenarios boot from a pre-provisioned snapshot so the environment is ready immediately. Set `playground: true` — the snapshot is auto-discovered via Hetzner labels (see [Building VM Images](#building-vm-images)). No `image:` needed.
 
-For snapshots containing a running k3d cluster, `setup.sh` needs to restart Docker and wait for the cluster to come back up:
+For snapshots with a k3d cluster, the cluster is stopped cleanly before snapshotting and must be restarted in `setup.sh`. Mark the lab ready as soon as the cluster is up, then wait for pods in the background so users get terminal access immediately:
 
 ```sh
 #!/bin/bash
 set -euo pipefail
 export HOME=/root
-mkdir -p /var/log/lab-setup
+mkdir -p /var/log/lab-setup /root/.kube
 
 systemctl start docker
+k3d cluster start uds
+k3d kubeconfig get uds > /root/.kube/config
+chmod 600 /root/.kube/config
 
-for i in $(seq 1 60); do
-  uds zarf tools kubectl get nodes --request-timeout=5s &>/dev/null && break
-  sleep 5
-done
-
+# Mark ready immediately — give terminal access while pods finish starting
 touch /var/log/lab-setup/ready
+
+# Wait for workloads in background; remove init notice when done
+{
+  uds zarf tools kubectl wait --for=condition=Available deployment \
+    --all --all-namespaces --timeout=300s 2>/dev/null || true
+  uds zarf tools kubectl wait --for=condition=Ready statefulset \
+    --all --all-namespaces --timeout=300s 2>/dev/null || true
+  touch /var/log/lab-setup/pods-ready
+} &
 ```
+
+Add a `/etc/profile.d/` script to show an initialization notice until pods are ready:
+
+```sh
+# In setup.sh, before touching ready:
+cat > /etc/profile.d/lab-init-status.sh << 'EOF'
+if [ ! -f /var/log/lab-setup/pods-ready ]; then
+  echo ""
+  echo "  ⚡ Pods are still initializing. Monitor: uds zarf tools monitor"
+  echo ""
+fi
+EOF
+```
+
+## Session Management
+
+Each browser is identified by a `lab_client_id` cookie (HttpOnly, 30-day expiry). Only one active lab session is allowed per client — attempting to start a second returns HTTP 409 with a user-friendly message. The existing session can be ended from the lab UI or by waiting for the TTL to expire.
+
+This is a placeholder for future GitHub OAuth integration. When auth is added, the cookie-based client ID in `clientID()` (`cmd/labserver/main.go`) will be replaced with the authenticated GitHub user ID — no other changes required.
