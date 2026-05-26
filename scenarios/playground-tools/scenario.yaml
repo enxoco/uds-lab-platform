@@ -1,0 +1,10 @@
+title: "Tools Playground"
+description: "Pre-configured sandbox with Docker, k3d, uds CLI, neovim, jq, yq, and yamllint installed. Deploy and experiment freely."
+duration: 60
+difficulty: beginner
+playground: true
+browser: true
+
+steps:
+  - title: "Welcome"
+    text: steps/welcome.md

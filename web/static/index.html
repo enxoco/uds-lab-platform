@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDS Interactive Labs</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <nav>
+    <span class="logo">UDS Labs</span>
+  </nav>
+
+  <div class="catalog">
+    <h1>Interactive Labs</h1>
+    <p class="subtitle">Hands-on UDS and Zarf exercises in a live browser environment — no installs required.</p>
+    <div class="scenario-grid" id="grid">
+      <div class="loading-text">Loading scenarios…</div>
+    </div>
+  </div>
+
+  <script>
+    async function load() {
+      const res = await fetch('/api/scenarios');
+      const scenarios = await res.json();
+      const grid = document.getElementById('grid');
+      grid.innerHTML = '';
+
+      if (!scenarios.length) {
+        grid.innerHTML = '<div class="loading-text">No scenarios available.</div>';
+        return;
+      }
+
+      scenarios.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'scenario-card' + (s.playground ? ' playground-card' : '');
+        card.innerHTML = `
+          <div class="card-header">
+            <h2>${esc(s.title || s.id)}</h2>
+            ${s.playground ? '<span class="tag tag-playground">⬡ Playground</span>' : ''}
+          </div>
+          <p>${esc(s.description || '')}</p>
+          <div class="scenario-meta">
+            ${s.duration ? `<span>⏱ ${s.duration} min</span>` : ''}
+            ${s.difficulty ? `<span class="tag">${esc(s.difficulty)}</span>` : ''}
+          </div>
+        `;
+        card.addEventListener('click', () => startLab(s.id));
+        grid.appendChild(card);
+      });
+    }
+
+    async function startLab(scenarioId) {
+      const btn = event.currentTarget.querySelector('h2');
+      btn.textContent = 'Starting…';
+
+      try {
+        const res = await fetch('/api/sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ scenario: scenarioId }),
+        });
+        if (res.status === 409) {
+          alert('You already have an active lab session. End it before starting a new one.');
+          load();
+          return;
+        }
+        if (!res.ok) throw new Error(await res.text());
+        const session = await res.json();
+        window.location.href = `/lab.html?session=${session.id}&scenario=${scenarioId}`;
+      } catch (e) {
+        alert('Failed to start lab: ' + e.message);
+        load();
+      }
+    }
+
+    function esc(s) {
+      return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    load();
+  </script>
+</body>
+</html>

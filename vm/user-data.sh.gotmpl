@@ -1,0 +1,55 @@
+#!/bin/bash
+set -euo pipefail
+
+export HOME=/root
+LOG=/var/log/lab-setup/bootstrap.log
+mkdir -p /var/log/lab-setup
+touch "$LOG"
+
+log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
+
+# ── Scenario setup ─────────────────────────────────────────────────────────────
+SCENARIO_DIR="/opt/scenario"
+mkdir -p "$SCENARIO_DIR"
+
+log "Writing scenario setup script..."
+cat > "$SCENARIO_DIR/setup.sh" << 'SETUP_EOF'
+{{.SetupSh}}
+SETUP_EOF
+chmod +x "$SCENARIO_DIR/setup.sh"
+
+log "Writing verify scripts..."
+mkdir -p "$SCENARIO_DIR/verify"
+{{range $name, $content := .VerifyScripts}}
+cat > "$SCENARIO_DIR/verify/{{$name}}" << 'VERIFY_EOF'
+{{$content}}
+VERIFY_EOF
+chmod +x "$SCENARIO_DIR/verify/{{$name}}"
+{{end}}
+
+# ── Input injection + verify server ───────────────────────────────────────────
+log "Writing lab-inject.py..."
+cat > /opt/lab-inject.py << 'INJECT_EOF'
+{{.InjectPy}}
+INJECT_EOF
+chmod +x /opt/lab-inject.py
+
+# ── Start tmux session ─────────────────────────────────────────────────────────
+touch /var/log/lab-setup/uds-setup.log
+log "Starting tmux session 'main'..."
+tmux new-session -d -s main /opt/lab-entry.sh
+
+# ── Enable services (pre-installed in base image) ─────────────────────────────
+log "Enabling services..."
+systemctl enable --now ttyd-main ttyd-shell lab-inject
+log "ttyd listening on :7681 (main), :7682 (shell); inject on :7680"
+{{if .BrowserEnabled}}
+systemctl enable --now lab-xvfb lab-x11vnc lab-novnc lab-browser
+log "browser environment listening on :6080"
+{{end}}
+
+# ── Run scenario setup in background ──────────────────────────────────────────
+log "Running scenario setup in background..."
+nohup bash "$SCENARIO_DIR/setup.sh" > /var/log/lab-setup/uds-setup.log 2>&1 &
+
+log "Bootstrap complete."

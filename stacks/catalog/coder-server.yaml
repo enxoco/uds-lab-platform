@@ -1,9 +1,0 @@
-components:
-  terraform:
-    coder-server:
-      vars:
-        server_type: ccx13
-        location: hil
-        coder_version: "latest"
-        ssh_key_names:
-          - local

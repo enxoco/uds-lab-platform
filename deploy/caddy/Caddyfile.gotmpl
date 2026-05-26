@@ -1,0 +1,16 @@
+{{if .Domain}}
+{{.Domain}} {
+    reverse_proxy /api/* localhost:8080
+    reverse_proxy /t/* localhost:8080
+    root * /opt/labserver/web/static
+    file_server
+    encode gzip
+}
+{{else}}
+:80 {
+    reverse_proxy /api/* localhost:8080
+    reverse_proxy /t/* localhost:8080
+    root * /opt/labserver/web/static
+    file_server
+}
+{{end}}
