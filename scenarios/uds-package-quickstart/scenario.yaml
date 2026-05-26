@@ -8,7 +8,6 @@ tags:
   - zarf
   - k3d
   - istio
-
 steps:
   - title: "Install prerequisites"
     text: steps/1-install-tools.md

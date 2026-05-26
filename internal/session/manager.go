@@ -87,21 +87,27 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	}
 
 	vmImage := m.vmCfg.Image
+
+	var labelSelector string
+
 	if isPlayground {
-		// Derive label selector from scenario ID:
-		// "playground-tools"    → "role=uds-lab-playground,tier=tools"
-		// "playground-uds-core" → "role=uds-lab-playground,tier=uds-core"
 		tier := strings.TrimPrefix(scenario, "playground-")
-		labelSelector := "role=uds-lab-playground,tier=" + tier
-		found, err := m.hcloud.FindLatestSnapshot(ctx, labelSelector)
-		if err != nil {
-			return nil, fmt.Errorf("find snapshot for playground %q: %w", scenario, err)
-		}
-		if found == "" {
-			return nil, fmt.Errorf("no snapshot found matching labels %q — build it first with packer/build-images.sh", labelSelector)
-		}
-		vmImage = found
+		labelSelector = "role=uds-lab-playground,tier=" + tier
+	} else {
+		labelSelector = "role=uds-lab-base"
 	}
+
+	found, err := m.hcloud.FindLatestSnapshot(ctx, labelSelector)
+	if err != nil {
+		return nil, fmt.Errorf("find snapshot for scenario %q with labels %q: %w", scenario, labelSelector, err)
+	}
+
+	if found == "" {
+		return nil, fmt.Errorf("no snapshot found matching labels %q — build it first with packer/build-images.sh", labelSelector)
+	}
+
+	vmImage = found
+
 	log.Printf("create session: scenario=%s image=%s", scenario, vmImage)
 
 	verifyScripts := map[string]string{}
