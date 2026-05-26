@@ -153,7 +153,7 @@ After=lab-xvfb.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/x11vnc -display :99 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -noxrecord -noxfixes -noxdamage
+ExecStart=/usr/bin/x11vnc -display :99 -forever -nopw -listen 127.0.0.1 -rfbport 5900 -xkb -noxrecord -noxdamage
 Restart=always
 RestartSec=3
 
