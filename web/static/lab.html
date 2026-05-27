@@ -297,10 +297,7 @@
     // ── Services ────────────────────────────────────────────────────────────
     function startServicesPoll() {
       fetchServices();
-      servicesPollInterval = setInterval(async () => {
-        const done = await fetchServices();
-        if (done) clearInterval(servicesPollInterval);
-      }, 10000);
+      servicesPollInterval = setInterval(fetchServices, 10000);
     }
 
     async function fetchServices() {
@@ -308,10 +305,8 @@
         const services = await fetch(`/api/sessions/${SESSION}/services`).then(r => r.json());
         if (services && services.length > 0) {
           renderServices(services);
-          return true;
         }
       } catch {}
-      return false;
     }
 
     function renderServices(services) {

@@ -22,7 +22,7 @@ Once the Package CR reaches `Ready`, a **reference-package** service chip will a
 ## Check the generated Keycloak client
 
 ```
-uds zarf tools kubectl get secret reference-package-sso -n reference-package -o jsonpath='{.data.clientId}' | base64 -d && echo
+uds zarf tools kubectl get secret reference-package-sso -n reference-package -o jsonpath='{.data.KEYCLOAK_CLIENT_ID}' | base64 -d && echo
 ```
 
 Pepr created this secret and populated it with the Keycloak client credentials. Your app reads from it — no hardcoded secrets, no manual Keycloak configuration.
