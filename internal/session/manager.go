@@ -75,14 +75,20 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	// Read flags from scenario.yaml
 	browserEnabled := false
 	isPlayground := false
+	imageOverride := ""
+	serverTypeOverride := ""
 	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
 		var meta struct {
-			Browser    bool `yaml:"browser"`
-			Playground bool `yaml:"playground"`
+			Browser    bool   `yaml:"browser"`
+			Playground bool   `yaml:"playground"`
+			Image      string `yaml:"image"`
+			ServerType string `yaml:"serverType"`
 		}
 		if yaml.Unmarshal(yamlData, &meta) == nil {
 			browserEnabled = meta.Browser
 			isPlayground = meta.Playground
+			imageOverride = meta.Image
+			serverTypeOverride = meta.ServerType
 		}
 	}
 
@@ -90,7 +96,9 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 
 	var labelSelector string
 
-	if isPlayground {
+	if imageOverride != "" {
+		labelSelector = "role=uds-lab-playground,tier=" + imageOverride
+	} else if isPlayground {
 		tier := strings.TrimPrefix(scenario, "playground-")
 		labelSelector = "role=uds-lab-playground,tier=" + tier
 	} else {
@@ -136,9 +144,14 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	id := uuid.New().String()
 	now := time.Now()
 
+	serverType := m.vmCfg.ServerType
+	if serverTypeOverride != "" {
+		serverType = serverTypeOverride
+	}
+
 	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
 		Name:       "lab-" + id[:8],
-		ServerType: m.vmCfg.ServerType,
+		ServerType: serverType,
 		Image:      vmImage,
 		Location:   m.vmCfg.Location,
 		UserData:   userData.String(),

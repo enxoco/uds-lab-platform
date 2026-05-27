@@ -196,6 +196,10 @@
           if (!labReady) return;
           pre.classList.add('running');
           setTimeout(() => pre.classList.remove('running'), 600);
+          // Always target Terminal 1 (Lab Terminal); switch to it so the user sees the injection.
+          if (activeTab !== 0) switchTab(0);
+          tabs[0].btn.classList.add('cmd-sent');
+          setTimeout(() => tabs[0].btn.classList.remove('cmd-sent'), 800);
           const code = (pre.querySelector('code')?.textContent || pre.textContent).trimEnd();
           fetch(`/t/${SESSION}/cmd`, {
             method: 'POST',
@@ -304,10 +308,7 @@
     // ── Services ────────────────────────────────────────────────────────────
     function startServicesPoll() {
       fetchServices();
-      servicesPollInterval = setInterval(async () => {
-        const done = await fetchServices();
-        if (done) clearInterval(servicesPollInterval);
-      }, 10000);
+      servicesPollInterval = setInterval(fetchServices, 10000);
     }
 
     async function fetchServices() {
@@ -315,10 +316,8 @@
         const services = await fetch(`/api/sessions/${SESSION}/services`).then(r => r.json());
         if (services && services.length > 0) {
           renderServices(services);
-          return true;
         }
       } catch {}
-      return false;
     }
 
     function renderServices(services) {
