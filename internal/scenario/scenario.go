@@ -31,6 +31,7 @@ type Scenario struct {
 	Browser     bool          `yaml:"browser"      json:"browser"`
 	Playground  bool          `yaml:"playground"   json:"playground"`
 	Image       string        `yaml:"image"        json:"image,omitempty"`
+	ServerType  string        `yaml:"serverType"   json:"serverType,omitempty"`
 	Services    []ServiceLink `yaml:"services"     json:"services"`
 }
 
