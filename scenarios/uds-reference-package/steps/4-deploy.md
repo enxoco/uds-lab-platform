@@ -2,46 +2,25 @@
 
 `uds run dev` is the standard development workflow for iterating on a UDS package with its full dependency chain. It reads `tasks.yaml`, builds your Zarf package from local source, creates the bundle defined in `bundle/uds-bundle.yaml`, and deploys it to the running cluster.
 
-## Configure environment-specific overrides
+## Configure bundle for the lab environment
 
-The bundle configures Postgres for production: 2 HA instances, 10Gi volumes, no explicit storage class. This single-node k3d cluster uses the `local-path` provisioner and doesn't need HA.
-
-`uds-config.yaml` is the proper mechanism for environment-specific bundle overrides — prod defaults live in the bundle, deployment-specific values live here. Create it before deploying:
+The bundle configures Postgres for production: 2 HA instances, 10Gi volumes, no explicit storage class. This single-node k3d cluster uses the `local-path` provisioner and doesn't need HA. Patch the bundle before deploying:
 
 ```
 cd /root/reference-package
 ```
 
 ```
-cat > uds-config.yaml << 'EOF'
-packages:
-  postgres-operator:
-    overrides:
-      postgres-operator:
-        uds-postgres-config:
-          values:
-            - path: postgresql
-              value:
-                enabled: true
-                teamId: "uds"
-                volume:
-                  size: "5Gi"
-                  storageClass: "local-path"
-                numberOfInstances: 1
-                users:
-                  reference-package.reference-package: []
-                databases:
-                  reference: reference-package.reference-package
-                version: "15"
-                ingress:
-                  - remoteNamespace: reference-package
-EOF
+uds zarf tools yq e '
+  (.packages[] | select(.name == "postgres-operator") | .overrides["postgres-operator"]["uds-postgres-config"].values[] | select(.path == "postgresql") | .value.numberOfInstances) = 1 |
+  (.packages[] | select(.name == "postgres-operator") | .overrides["postgres-operator"]["uds-postgres-config"].values[] | select(.path == "postgresql") | .value.volume.size) = "5Gi" |
+  (.packages[] | select(.name == "postgres-operator") | .overrides["postgres-operator"]["uds-postgres-config"].values[] | select(.path == "postgresql") | .value.volume.storageClass) = "local-path" |
+  (.packages[] | select(.name == "postgres-operator") | .overrides["postgres-operator"]["uds-postgres-config"].values[] | select(.path == "postgresql") | .value.resources) = {"requests":{"cpu":"100m","memory":"256Mi"},"limits":{"cpu":"500m","memory":"512Mi"}}
+' -i bundle/uds-bundle.yaml
 ```
 
-UDS picks this up automatically at deploy time and merges it with the bundle configuration.
-
-> **Why not just edit `bundle/uds-bundle.yaml`?**
-> The bundle is the authoritative prod-grade artifact — it should always reflect production defaults. Editing it to fit a dev environment means you're one commit away from shipping under-resourced, single-instance Postgres to production. `uds-config.yaml` keeps environment-specific overrides separate and explicit. You'd commit one per environment (dev, staging, prod) and never touch the bundle itself for per-env tuning.
+> **Why not use `uds-config.yaml`?**
+> `uds-config.yaml` can only override `variables` that the bundle author explicitly exposed — it cannot reach into `values` blocks. The postgres config here uses `values`, so the only pre-deploy option is patching the bundle directly. In practice, a well-structured bundle would expose these as named `variables` with defaults, letting operators override them without touching the file. That's the pattern to follow when you author your own bundles.
 
 ## Deploy
 
