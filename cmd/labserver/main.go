@@ -176,11 +176,25 @@ func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
 	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	jsonOK(w, sess)
 }
 
 func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
-	if err := s.mgr.Delete(r.Context(), r.PathValue("id")); err != nil {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.mgr.Delete(r.Context(), id); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
 	}
@@ -191,6 +205,10 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.mgr.Get(r.PathValue("id"))
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if sess.Status != session.StatusReady {
@@ -218,6 +236,10 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.mgr.Get(r.PathValue("id"))
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	if sess.Status != session.StatusReady {
@@ -249,6 +271,10 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if !sess.BrowserEnabled || sess.Status != session.StatusReady {
 		http.Error(w, "browser not available", http.StatusServiceUnavailable)
 		return
@@ -276,6 +302,10 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.mgr.Get(r.PathValue("id"))
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
 		return
 	}
 
@@ -320,6 +350,10 @@ func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if !sess.BrowserEnabled {
 		http.Error(w, "browser not available for this scenario", http.StatusNotFound)
 		return
@@ -346,6 +380,10 @@ func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, po
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
 	if sess.Status != session.StatusReady {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
@@ -362,6 +400,13 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+}
+
+// ownsSession returns true if the request's lab_client_id cookie matches the session owner.
+// Never sets a cookie — use clientID for that.
+func ownsSession(r *http.Request, sess *session.Session) bool {
+	c, err := r.Cookie("lab_client_id")
+	return err == nil && c.Value != "" && c.Value == sess.ClientID
 }
 
 // clientID returns a stable client identifier from the lab_client_id cookie,
