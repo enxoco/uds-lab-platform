@@ -42,7 +42,7 @@ A VM image layered on top of Base Image with heavy tooling pre-installed (Docker
 The primary terminal tab (Tab 1) in the Lab UI. Attached to the tmux session on the VM. Shows live setup log output while the Setup Script runs, then transitions to an interactive prompt when the VM is ready. The target for Click-to-Run command injection. Only one Lab Terminal exists per Session.
 
 ### Shell Terminal
-Additional terminal tabs (Tab 2+) in the Lab UI. Direct root bash shells, always available — even while the Setup Script is still running. Users open Shell Terminals to explore the VM or run commands without waiting for setup to complete. Multiple Shell Terminals can be open simultaneously.
+Additional terminal tabs (Tab 2+) in the Lab UI. Direct root bash shells, always available — even while the Setup Script is still running. Users open Shell Terminals to explore the VM or run commands without waiting for setup to complete. Multiple Shell Terminals can be open simultaneously. Shell Terminals are not Click-to-Run targets; clicking a code block while a Shell Terminal is active automatically switches focus to the Lab Terminal before injecting the command.
 
 ---
 
@@ -95,3 +95,4 @@ A Session that is active on the server but inaccessible to the user because the 
 - **No session resume** — Session ID lives in the URL only; closing the tab without bookmarking creates an Orphaned Session.
 - **No session extension** — Session Expiry is hard; TTL cannot be extended once a Session starts.
 - **One session per Client** — a Client cannot run multiple Labs simultaneously.
+- **Click-to-Run during active setup** — Click-to-Run always targets the Lab Terminal (Tab 1). If the Setup Script is still running, the command is buffered by tmux and fires silently once the terminal becomes interactive. No warning is shown; users may not realize their command was queued.

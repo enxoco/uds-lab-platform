@@ -396,6 +396,12 @@ nav .logo {
   border-bottom: 2px solid var(--accent);
 }
 
+@keyframes tab-cmd-sent {
+  0%   { background: rgba(88,166,255,0.25); color: var(--text); border-bottom-color: var(--accent); }
+  100% { background: #010409; }
+}
+.tab-btn.cmd-sent { animation: tab-cmd-sent 0.8s ease-out; border-bottom: 2px solid var(--accent); }
+
 .tab-close {
   font-size: 14px;
   line-height: 1;

@@ -196,6 +196,10 @@
           if (!labReady) return;
           pre.classList.add('running');
           setTimeout(() => pre.classList.remove('running'), 600);
+          // Always target Terminal 1 (Lab Terminal); switch to it so the user sees the injection.
+          if (activeTab !== 0) switchTab(0);
+          tabs[0].btn.classList.add('cmd-sent');
+          setTimeout(() => tabs[0].btn.classList.remove('cmd-sent'), 800);
           const code = (pre.querySelector('code')?.textContent || pre.textContent).trimEnd();
           fetch(`/t/${SESSION}/cmd`, {
             method: 'POST',

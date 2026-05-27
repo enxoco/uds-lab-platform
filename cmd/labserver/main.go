@@ -288,7 +288,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 
 	// Auto-detect from cluster VirtualServices
 	if sess.BrowserEnabled && sess.Status == session.StatusReady {
-		client := &http.Client{Timeout: 5 * time.Second}
+		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Get(fmt.Sprintf("http://%s:7680/services", sess.VMIP))
 		if err == nil {
 			defer resp.Body.Close()
