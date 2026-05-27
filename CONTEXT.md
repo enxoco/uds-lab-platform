@@ -82,9 +82,32 @@ A Session that is active on the server but inaccessible to the user because the 
 
 ---
 
+## Identity & Access
+
+### User
+An authenticated person with a verified identity via OIDC. Replaces the alpha **Client** model. A User is person-scoped (not browser-scoped): one active Session per User, resumable from any browser. Stored by OIDC `sub` claim. One User belongs to one Organization.
+
+### Organization
+A company or team that uses the platform. The unit of quota management and Learning Path assignment. All Users in an Organization share a lab-minutes pool. DU's relationship for access and billing is with the Organization, not individual Users.
+
+### Admin
+A DU employee with elevated platform access, identified by membership in the `lab-platform-admins` Keycloak group. Admins manage org quotas, view active Sessions, and assign Learning Paths via the admin page.
+
+---
+
+## Quota & Learning
+
+### Lab Minute Allocation
+The pool of lab minutes available to an Organization. Default set by operator config; overridable per-org by Admins. Sessions consume minutes equal to their actual duration. New Sessions are blocked when the org reaches 100% of allocation; a warning is surfaced at 80%. Running Sessions are never killed mid-lab by quota enforcement.
+
+### Learning Path
+A named, ordered list of Scenarios that DU recommends for a category of User (e.g., "Standard ISV Onboarding"). The full Scenario catalog is always accessible; a Learning Path surfaces recommended Scenarios at the top of the catalog with progress tracking. Defined in operator config. An Organization is associated with one Learning Path.
+
+---
+
 ## Known Limitations (Alpha)
 
-- **No authentication** — identity is browser-scoped (Client), not user-scoped. No login, no per-user history.
+- **No authentication (alpha only)** — alpha used browser-scoped Client identity (cookie). Production replaces this with OIDC User identity (see ADR-0006).
 - **No session resume** — Session ID lives in the URL only; closing the tab without bookmarking creates an Orphaned Session.
 - **No session extension** — Session Expiry is hard; TTL cannot be extended once a Session starts.
 - **One session per Client** — a Client cannot run multiple Labs simultaneously.
