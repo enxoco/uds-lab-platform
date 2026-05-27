@@ -41,7 +41,7 @@ The reference package itself (`path: ../`) is also listed as a package in the bu
 ## `uds run dev` deploys this bundle
 
 ```
-cat tasks.yaml | grep -A5 "dev:"
+cat tasks.yaml | grep -A5 "name: dev"
 ```
 
 `uds run dev` reads `tasks.yaml` and deploys `bundle/uds-bundle.yaml` against the running cluster. This is the correct workflow for iterating on a package with its full dependency chain during development. You get postgres-operator + your app in one command, wired together exactly as they would be in production.
