@@ -2,6 +2,8 @@
 
 `uds run dev` is the standard development workflow for iterating on a UDS package with its full dependency chain. It reads `tasks.yaml`, builds your Zarf package from local source, creates the bundle defined in `bundle/uds-bundle.yaml`, and deploys it to the running cluster.
 
+## Deploy
+
 ```
 cd /root/reference-package && uds run dev
 ```
@@ -13,6 +15,22 @@ This runs three operations in sequence:
 3. **Deploy the bundle** — deploys `postgres-operator` first (it's listed first in `uds-bundle.yaml`), then `reference-package` on top
 
 > The image cache was pre-warmed in the background when this lab started. If `uds run dev` still takes a few minutes, that's normal — bundle creation and deployment have real work to do.
+
+## Patch Postgres for the lab environment
+
+The bundle configures Postgres for production: 2 HA instances, 10Gi volumes, no explicit storage class. This single-node k3d cluster uses the `local-path` provisioner and doesn't need HA. Patch the running PostgreSQL cluster to match:
+
+```
+uds zarf tools kubectl patch postgresql \
+  -n postgres \
+  $(uds zarf tools kubectl get postgresql -n postgres -o jsonpath='{.items[0].metadata.name}') \
+  --type=merge \
+  -p '{"spec":{"numberOfInstances":1,"volume":{"size":"5Gi","storageClass":"local-path"}}}'
+```
+
+The Zalando operator reconciles the change immediately — it deletes the pending StatefulSet and recreates it with a PVC that `local-path` can provision.
+
+This is the same pattern operators use in any environment: the bundle captures production-grade defaults, and `kubectl patch` applies environment-specific overrides to the running resource without touching the package or bundle source.
 
 ## Watch the rollout
 
