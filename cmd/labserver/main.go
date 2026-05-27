@@ -26,6 +26,7 @@ import (
 type server struct {
 	mgr         *session.Manager
 	scenariosFS fs.FS
+	ttlMinutes  int
 }
 
 func main() {
@@ -105,9 +106,10 @@ func main() {
 		},
 	)
 
-	srv := &server{mgr: mgr, scenariosFS: scenariosFS}
+	srv := &server{mgr: mgr, scenariosFS: scenariosFS, ttlMinutes: ttlMinutes}
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /api/config", srv.getConfig)
 	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
 	mux.HandleFunc("GET /api/scenarios/{id}", srv.getScenario)
 	mux.HandleFunc("POST /api/sessions", srv.createSession)
@@ -124,6 +126,10 @@ func main() {
 
 	log.Printf("labserver listening on :%s", port)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
+}
+
+func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
+	jsonOK(w, map[string]any{"session_ttl_minutes": s.ttlMinutes})
 }
 
 func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {

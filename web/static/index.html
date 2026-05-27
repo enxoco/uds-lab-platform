@@ -20,9 +20,21 @@
   </div>
 
   <script>
+    function fmtTTL(minutes) {
+      if (minutes < 60) return `${minutes} min`;
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      return m === 0 ? `${h}h` : `${h}h ${m}m`;
+    }
+
     async function load() {
-      const res = await fetch('/api/scenarios');
-      const scenarios = await res.json();
+      const [scenariosRes, configRes] = await Promise.all([
+        fetch('/api/scenarios'),
+        fetch('/api/config'),
+      ]);
+      const scenarios = await scenariosRes.json();
+      const config = await configRes.json();
+      const sessionTTL = config.session_ttl_minutes;
       const grid = document.getElementById('grid');
       grid.innerHTML = '';
 
@@ -41,7 +53,8 @@
           </div>
           <p>${esc(s.description || '')}</p>
           <div class="scenario-meta">
-            ${s.duration ? `<span>⏱ ${s.duration} min</span>` : ''}
+            ${s.duration ? `<span>⏱ ~${s.duration} min</span>` : ''}
+            <span title="Session time limit">⏳ ${fmtTTL(sessionTTL)}</span>
             ${s.difficulty ? `<span class="tag">${esc(s.difficulty)}</span>` : ''}
           </div>
         `;
