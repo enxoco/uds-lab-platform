@@ -81,6 +81,10 @@
   </div>
 
   <script>
+    // Strip raw HTML blocks — scenario markdown should not contain raw HTML.
+    // Prevents XSS from malicious or compromised scenario content without external deps.
+    marked.use({ renderer: { html() { return ''; } } });
+
     const params   = new URLSearchParams(location.search);
     const SESSION  = params.get('session');
     const SCENARIO = params.get('scenario');
