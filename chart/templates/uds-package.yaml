@@ -1,0 +1,27 @@
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: uds-lab-platform
+  namespace: {{ .Release.Namespace }}
+
+spec:
+  sso:
+    - clientId: uds-lab-platform
+      name: UDS Lab Platform
+      redirectUris:
+        - "https://lab.{{ .Values.domain }}/login"
+      enableAuthserviceSelector:
+        app: lab-platform
+  network:
+    allow:
+      # egress to Hetzner Cloud API
+      - direction: Egress
+        remoteGenerated: Anywhere
+        description: Hetzner Cloud API and VM egress
+    expose:
+      - service: lab-platform
+        selector:
+          app: lab-platform
+        host: lab
+        gateway: tenant
+        port: 8080

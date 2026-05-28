@@ -1,0 +1,23 @@
+# # Copyright 2024 Defense Unicorns
+# # SPDX-License-Identifier: AGPL-3.0-or-later OR LicenseRef-Defense-Unicorns-Commercial
+
+# # yaml-language-server: $schema=https://raw.githubusercontent.com/defenseunicorns/zarf/main/zarf.schema.json
+# kind: ZarfPackageConfig
+# metadata:
+#   name: uds-lab-platform-common
+#   description: "UDS Lab Platform Common Package"
+
+# components:
+#   - name: lab-platform
+#     required: true
+#     charts:
+#       - name: uds-lab-platform-config
+#         namespace: lab-platform
+#         version: 0.1.0
+#         localPath: ../chart
+#       - name: lab-platform
+#         namespace: lab-platform
+#         version: 0.1.0
+#         localPath: ../templates
+#         valuesFiles:
+#           - ../values/common-values.yaml

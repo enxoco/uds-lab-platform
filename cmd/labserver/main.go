@@ -109,6 +109,7 @@ func main() {
 	srv := &server{mgr: mgr, scenariosFS: scenariosFS, ttlMinutes: ttlMinutes}
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 	mux.HandleFunc("GET /api/config", srv.getConfig)
 	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
 	mux.HandleFunc("GET /api/scenarios/{id}", srv.getScenario)
@@ -173,7 +174,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(sess)
+	_ = json.NewEncoder(w).Encode(sess)
 }
 
 func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
@@ -233,9 +234,9 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "verify failed", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	w.Header().Set("Content-Type", "application/json")
-	io.Copy(w, resp.Body)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
@@ -267,7 +268,7 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "injection failed", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	w.WriteHeader(resp.StatusCode)
 }
 
@@ -300,7 +301,7 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "navigate failed", http.StatusBadGateway)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	w.WriteHeader(resp.StatusCode)
 }
 
@@ -327,7 +328,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Get(fmt.Sprintf("http://%s:7680/services", sess.VMIP))
 		if err == nil {
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 			var detected []scenario.ServiceLink
 			if json.NewDecoder(resp.Body).Decode(&detected) == nil {
 				existing := make(map[string]bool, len(services))
@@ -399,13 +400,13 @@ func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, po
 
 func jsonOK(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(v)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func jsonError(w http.ResponseWriter, msg string, code int) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
 // ownsSession returns true if the request's lab_client_id cookie matches the session owner.

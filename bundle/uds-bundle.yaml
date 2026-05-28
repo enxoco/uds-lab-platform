@@ -1,0 +1,10 @@
+kind: UDSBundle
+metadata:
+  name: uds-lab-platform
+  description: UDS Lab Platform — interactive ISV packaging labs
+  version: "0.1.0"
+
+packages:
+  - name: uds-lab-platform
+    path: ./
+    ref: "0.1.0"

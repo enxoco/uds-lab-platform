@@ -1,0 +1,5 @@
+apiVersion: v2
+name: lab-platform
+description: UDS Lab Platform
+version: 0.1.0
+type: application

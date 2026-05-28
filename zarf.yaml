@@ -1,0 +1,42 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zarf-dev/zarf/main/zarf.schema.json
+apiVersion: zarf.dev/v1alpha1
+
+kind: ZarfPackageConfig
+metadata:
+  name: uds-lab-platform
+  description: UDS Lab Platform — interactive ISV packaging labs
+  version: 0.1.0
+
+variables:
+  - name: IMAGE
+    description: Lab platform container image
+    default: ghcr.io/enxoco/uds-lab-platform:dev
+  - name: HCLOUD_TOKEN
+    description: Hetzner Cloud API token
+    sensitive: true
+  - name: DOMAIN
+    description: Base domain for lab platform (e.g. example.com)
+    default: uds.dev
+
+components:
+  - name: lab-platform
+    required: true
+    charts:
+      - name: lab-platform
+        localPath: chart
+        version: 0.1.0
+        namespace: lab-platform
+        variables:
+          - name: DOMAIN
+            description: Base domain for lab platform
+            path: domain
+          - name: HCLOUD_TOKEN
+            description: Hetzner Cloud API token
+            path: hcloudToken
+          - name: IMAGE
+            description: Lab platform container image
+            path: image
+    imageArchives:
+      - path: ./lab-server.tar
+        images:
+          - ghcr.io/enxoco/uds-lab-platform:dev

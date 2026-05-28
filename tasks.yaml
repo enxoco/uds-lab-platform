@@ -1,0 +1,47 @@
+includes:
+  - attest: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/attest.yaml
+  - build: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/build.yaml
+  - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/olm.yaml
+  - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/publish.yaml
+  - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/scan.yaml
+  - setup: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/setup.yaml
+  - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/vouch.yaml
+
+tasks:
+  - name: lint
+    description: Run linters and static analysis
+    actions:
+      - description: Run golangci-lint
+        cmd: golangci-lint run ./...
+  - name: dev
+    description: Build image, save tar, create zarf package
+    actions:
+      - description: Build container image
+        cmd: docker build -t ghcr.io/enxoco/uds-lab-platform:dev .
+      - description: Save image to tar for zarf
+        cmd: docker save ghcr.io/enxoco/uds-lab-platform:dev -o ./lab-server.tar
+      - description: Create zarf package
+        cmd: zarf package create . --set VERSION=0.1.0 --output ./bundle --confirm
+
+
+
+  - name: bundle
+    description: Create UDS bundle from local zarf package
+    actions:
+      - description: Create UDS bundle
+        cmd: uds create . --confirm
+        dir: ./bundle
+
+  - name: deploy
+    description: Deploy UDS bundle (requires HCLOUD_TOKEN env var)
+    actions:
+      - description: Deploy UDS bundle
+        dir: ./bundle
+        cmd: uds deploy uds-bundle-uds-lab-platform-amd64-0.1.0.tar.zst --set HCLOUD_TOKEN="${HCLOUD_TOKEN}" --confirm
+
+  - name: all
+    description: Build, bundle, and deploy end-to-end
+    actions:
+      - task: dev
+      - task: bundle
+      - task: deploy
