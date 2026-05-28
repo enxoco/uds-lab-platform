@@ -92,7 +92,7 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 		}
 	}
 
-	vmImage := m.vmCfg.Image
+	var vmImage string
 
 	var labelSelector string
 
@@ -221,7 +221,7 @@ func (m *Manager) pollReady(s *Session) {
 
 		resp, err := client.Get(url)
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {
 				m.mu.Lock()
 				if sess, ok := m.sessions[s.ID]; ok {

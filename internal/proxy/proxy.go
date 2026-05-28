@@ -10,10 +10,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
-}
-
 // Handler proxies HTTP and WebSocket traffic to target, stripping prefix.
 func Handler(target string, stripPrefix string) http.Handler {
 	targetURL, _ := url.Parse(target)
@@ -44,7 +40,7 @@ func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
 		http.Error(w, "terminal not ready", http.StatusBadGateway)
 		return
 	}
-	defer upstream.Close()
+	defer func() { _ = upstream.Close() }()
 
 	u := websocket.Upgrader{
 		CheckOrigin:  func(r *http.Request) bool { return true },
@@ -54,7 +50,7 @@ func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
 	if err != nil {
 		return
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 
 	errc := make(chan error, 2)
 	cp := func(dst, src *websocket.Conn) {

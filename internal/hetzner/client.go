@@ -72,7 +72,7 @@ func (c *Client) FindLatestSnapshot(ctx context.Context, labelSelector string) (
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("hcloud list images: status %d", resp.StatusCode)
@@ -115,7 +115,7 @@ func (c *Client) resolveImageID(ctx context.Context, nameOrID string) (string, e
 	if err != nil {
 		return "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("hcloud resolve image %q: status %d", nameOrID, resp.StatusCode)
@@ -157,7 +157,7 @@ func (c *Client) CreateServer(ctx context.Context, req CreateServerRequest) (id 
 	if err != nil {
 		return 0, "", err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusCreated {
 		return 0, "", fmt.Errorf("hcloud create server: status %d", resp.StatusCode)
@@ -183,7 +183,7 @@ func (c *Client) DeleteServer(ctx context.Context, id int64) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return fmt.Errorf("hcloud delete server %d: status %d", id, resp.StatusCode)

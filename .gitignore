@@ -1,7 +1,15 @@
 .env
+uds-config.yaml
 .terraform/
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
 packer/manifest*.json
 uds-lab-platform
+bin/
+*.tar
+*.tar.zst
+*-witness.json
+*.sarif.json
+witness-key.pem
+witness-pub.pem
