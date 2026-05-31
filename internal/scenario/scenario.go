@@ -21,17 +21,17 @@ type Step struct {
 }
 
 type Scenario struct {
-	ID          string   `yaml:"-"            json:"id"`
-	Title       string   `yaml:"title"        json:"title"`
-	Description string   `yaml:"description"  json:"description"`
-	Duration    int      `yaml:"duration"     json:"duration"`
-	Difficulty  string   `yaml:"difficulty"   json:"difficulty"`
-	Tags        []string `yaml:"tags"         json:"tags"`
-	Steps       []Step   `yaml:"steps"        json:"steps"`
+	ID          string        `yaml:"-"            json:"id"`
+	Title       string        `yaml:"title"        json:"title"`
+	Description string        `yaml:"description"  json:"description"`
+	Duration    int           `yaml:"duration"     json:"duration"`
+	Difficulty  string        `yaml:"difficulty"   json:"difficulty"`
+	Tags        []string      `yaml:"tags"         json:"tags"`
+	Steps       []Step        `yaml:"steps"        json:"steps"`
 	Browser     bool          `yaml:"browser"      json:"browser"`
 	Playground  bool          `yaml:"playground"   json:"playground"`
 	Image       string        `yaml:"image"        json:"image,omitempty"`
-	ServerType  string        `yaml:"serverType"   json:"serverType,omitempty"`
+	Size        string        `yaml:"size"         json:"size,omitempty"`
 	Services    []ServiceLink `yaml:"services"     json:"services"`
 }
 

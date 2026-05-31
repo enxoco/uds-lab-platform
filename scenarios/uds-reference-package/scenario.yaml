@@ -4,7 +4,7 @@ duration: 45
 difficulty: beginner
 browser: true
 image: uds-core
-serverType: ccx23
+size: large
 tags:
   - uds
   - zarf

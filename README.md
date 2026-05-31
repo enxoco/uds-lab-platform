@@ -67,7 +67,6 @@ The server prompts interactively for `HCLOUD_TOKEN` if not set as an env var.
 |----------|---------|-------------|
 | `HCLOUD_TOKEN` | *(prompted)* | Hetzner Cloud API token |
 | `VM_IMAGE` | `ubuntu-24.04` | Default image/snapshot name for new VMs |
-| `VM_SERVER_TYPE` | `ccx13` | Hetzner server type |
 | `VM_LOCATION` | `hil` | Hetzner datacenter location |
 | `SESSION_TTL_MINUTES` | `60` | Lab session lifetime in minutes |
 | `PORT` | `8080` | HTTP listen port |

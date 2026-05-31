@@ -13,18 +13,29 @@ import (
 	"time"
 
 	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
+	"github.com/defenseunicorns/uds-lab-platform/internal/sizing"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
 
 type VMConfig struct {
-	ServerType   string
 	Location     string
 	Image        string
 	SSHKeyNames  []string
 	UserDataTmpl *template.Template
 	ScenariosFS  fs.FS
 	InjectPy     string
+}
+
+// hetznerServerTypeForSize maps abstract size tiers (ADR-0013) to Hetzner
+// server types. This is interim glue: the Hetzner backend is removed in the
+// KubeVirt migration (ADR-0010), at which point the abstract size flows to the
+// operator's ConfigMap instead. Until then it keeps the legacy path working
+// against the provider-agnostic scenario `size` field.
+var hetznerServerTypeForSize = map[sizing.Size]string{
+	sizing.Small:  "cpx21",
+	sizing.Medium: "ccx13",
+	sizing.Large:  "ccx23",
 }
 
 type Manager struct {
@@ -76,19 +87,23 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	browserEnabled := false
 	isPlayground := false
 	imageOverride := ""
-	serverTypeOverride := ""
+	scenarioSize := sizing.Default
 	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
 		var meta struct {
 			Browser    bool   `yaml:"browser"`
 			Playground bool   `yaml:"playground"`
 			Image      string `yaml:"image"`
-			ServerType string `yaml:"serverType"`
+			Size       string `yaml:"size"`
 		}
 		if yaml.Unmarshal(yamlData, &meta) == nil {
 			browserEnabled = meta.Browser
 			isPlayground = meta.Playground
 			imageOverride = meta.Image
-			serverTypeOverride = meta.ServerType
+			size, err := sizing.Normalize(sizing.Size(meta.Size))
+			if err != nil {
+				return nil, fmt.Errorf("scenario %q: %w", scenario, err)
+			}
+			scenarioSize = size
 		}
 	}
 
@@ -144,10 +159,7 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	id := uuid.New().String()
 	now := time.Now()
 
-	serverType := m.vmCfg.ServerType
-	if serverTypeOverride != "" {
-		serverType = serverTypeOverride
-	}
+	serverType := hetznerServerTypeForSize[scenarioSize]
 
 	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
 		Name:       "lab-" + id[:8],
