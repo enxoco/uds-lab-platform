@@ -22,7 +22,19 @@ The technical lifecycle handle for a running Lab: VM ID, VM IP, status, TTL, and
 A unit of instruction within a Scenario. Each Step contains markdown content rendered in the left panel. Steps may optionally include a Verify script. Without Verify, users advance freely. With Verify, users must pass the check before proceeding.
 
 ### Client
-A browser-scoped identity derived from a `lab_client_id` cookie (HttpOnly, 30-day expiry). A Client is a browser/device, not necessarily a person — one person using two browsers has two independent Clients. One active Session per Client is enforced. **Not** a User identity: there is no authentication.
+A browser-scoped identity derived from a `lab_client_id` cookie (HttpOnly, 30-day expiry). A Client is a browser/device, not necessarily a person — one person using two browsers has two independent Clients. One active Session per Client is enforced. After Auth Gate is passed, a Client is also bound to a GitHub username (Participant identity).
+
+### Participant
+A person who has passed the Auth Gate: entered the correct Workshop Code and completed GitHub OAuth. Participant identity is a GitHub username attached to the Client record in memory. The canonical user-facing identity — replaces the anonymous Client model for gated workshops.
+
+### Workshop Code
+A pre-shared alphanumeric passphrase (e.g., `SCS-HERO-2026`) distributed by the workshop organizer to participants. Entered on the login page before GitHub OAuth begins. Configured via `WORKSHOP_CODE` env var. First line of defense against unauthorized access.
+
+### Auth Gate
+The two-step entry sequence enforced before a Participant can access the catalog or start a Lab: (1) submit Workshop Code, (2) complete GitHub OAuth. Both must pass. Unauthenticated requests to any protected route redirect to `/login`.
+
+### Admin
+A Participant whose GitHub username appears in the `ADMIN_USERS` env var (comma-separated). Admins can view all active Sessions (Participant identity, Scenario, VM IP, time remaining) and terminate any Session (destroying the VM and invalidating the Client auth state).
 
 ---
 
@@ -91,7 +103,7 @@ A Session that is active on the server but inaccessible to the user because the 
 
 ## Known Limitations (Alpha)
 
-- **No authentication** — identity is browser-scoped (Client), not user-scoped. No login, no per-user history.
+- **Auth state lost on server restart** — Participant identity is stored in memory; a server restart requires all Clients to re-authenticate through the Auth Gate.
 - **No session resume** — Session ID lives in the URL only; closing the tab without bookmarking creates an Orphaned Session.
 - **No session extension** — Session Expiry is hard; TTL cannot be extended once a Session starts.
 - **One session per Client** — a Client cannot run multiple Labs simultaneously.

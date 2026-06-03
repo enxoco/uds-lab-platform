@@ -12,7 +12,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
+	"github.com/enxoco/uds-lab-platform/internal/hetzner"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
@@ -187,6 +187,16 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[id]
 	return s, ok
+}
+
+func (m *Manager) All() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		out = append(out, s)
+	}
+	return out
 }
 
 func (m *Manager) Delete(ctx context.Context, id string) error {
