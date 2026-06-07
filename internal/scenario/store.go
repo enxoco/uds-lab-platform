@@ -31,6 +31,16 @@ type AdminStore interface {
 	Versions(ctx context.Context, id string) ([]VersionSummary, error)
 	// Restore rolls the scenario's files back to a prior version snapshot.
 	Restore(ctx context.Context, scenarioID string, versionID int64) error
+
+	// CreateScenario scaffolds a new draft scenario with minimal files.
+	CreateScenario(ctx context.Context, id string) error
+	// ListFiles returns all file paths for a scenario, sorted.
+	ListFiles(ctx context.Context, id string) ([]string, error)
+	// GetFile returns the content of a single scenario file.
+	GetFile(ctx context.Context, id, path string) (string, error)
+	// PutFile writes a scenario file. Creates the scenario row if needed.
+	// Does not snapshot — versions are created explicitly via Publish.
+	PutFile(ctx context.Context, id, path, content string) error
 }
 
 // Compile-time interface checks.

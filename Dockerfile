@@ -13,7 +13,9 @@ COPY . ./
 COPY --from=ide-build /app/web/static/ide-assets/ ./web/static/ide-assets/
 RUN CGO_ENABLED=0 GOOS=linux go build -o /lab-server ./cmd/labserver
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM debian:bookworm-slim
+RUN apt-get update -q && apt-get install -y -q shellcheck && rm -rf /var/lib/apt/lists/*
 COPY --from=build /lab-server /lab-server
 EXPOSE 8080
+USER nobody
 CMD ["/lab-server"]

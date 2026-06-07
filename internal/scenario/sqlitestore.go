@@ -339,6 +339,78 @@ func (s *SQLiteStore) allFiles(ctx context.Context, id string) (map[string]strin
 	return files, rows.Err()
 }
 
+// --- File authoring methods -------------------------------------------------
+
+func (s *SQLiteStore) CreateScenario(ctx context.Context, id string) error {
+	scaffold := map[string]string{
+		"scenario.yaml": "title: \"\"\ndescription: \"\"\nduration: 30\ndifficulty: beginner\nsteps:\n  - title: \"Step 1\"\n    text: steps/1-start.md\n    verify: verify/step1.sh\n",
+		"setup.sh":               "#!/bin/bash\nset -euo pipefail\n\n# TODO: add setup steps\n\ntouch /var/log/lab-setup/ready\n",
+		"steps/1-start.md":       "# Step 1\n\nDescribe the first step here.\n",
+		"verify/step1.sh":        "#!/bin/bash\n# TODO: add verification logic\nexit 0\n",
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO scenarios(id, status) VALUES(?, 'draft')`, id,
+	); err != nil {
+		return fmt.Errorf("create scenario %q: %w", id, err)
+	}
+	for path, content := range scaffold {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO scenario_files(scenario_id, path, content) VALUES(?,?,?)`,
+			id, path, content,
+		); err != nil {
+			return fmt.Errorf("scaffold %q: %w", path, err)
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *SQLiteStore) ListFiles(ctx context.Context, id string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT path FROM scenario_files WHERE scenario_id=? ORDER BY path`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var paths []string
+	for rows.Next() {
+		var p string
+		if err := rows.Scan(&p); err != nil {
+			return nil, err
+		}
+		paths = append(paths, p)
+	}
+	return paths, rows.Err()
+}
+
+func (s *SQLiteStore) GetFile(ctx context.Context, id, path string) (string, error) {
+	content, err := s.fileContent(ctx, id, path)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("scenario %q: file %q not found", id, path)
+	}
+	return content, err
+}
+
+func (s *SQLiteStore) PutFile(ctx context.Context, id, path, content string) error {
+	_, err := s.db.ExecContext(ctx, `
+        INSERT INTO scenario_files(scenario_id, path, content) VALUES(?,?,?)
+        ON CONFLICT(scenario_id, path) DO UPDATE SET content=excluded.content`,
+		id, path, content)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE scenarios SET updated_at=datetime('now') WHERE id=?`, id)
+	return err
+}
+
+// --- Internal helpers -------------------------------------------------------
+
 func (s *SQLiteStore) fileContent(ctx context.Context, scenarioID, path string) (string, error) {
 	var content string
 	err := s.db.QueryRowContext(ctx,

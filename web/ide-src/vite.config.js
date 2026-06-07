@@ -6,7 +6,7 @@ export default defineConfig({
     outDir: '../static/ide-assets',
     emptyOutDir: true,
     rollupOptions: {
-      input: { main: './src/main.js' },
+      input: { main: './src/main.js', 'scenario-editor': './src/scenario-editor.js' },
       output: {
         entryFileNames: '[name].js',
         chunkFileNames: '[name]-[hash].js',

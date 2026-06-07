@@ -207,6 +207,118 @@ func TestSQLiteStore_AdminList_ReturnsAllStatuses(t *testing.T) {
 	}
 }
 
+// --- File authoring tests ----------------------------------------------------
+
+func TestSQLiteStore_CreateScenario_ScaffoldsFiles(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	if err := store.CreateScenario(ctx, "new-scenario"); err != nil {
+		t.Fatalf("CreateScenario: %v", err)
+	}
+
+	files, err := store.ListFiles(ctx, "new-scenario")
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected scaffolded files, got none")
+	}
+	// scenario.yaml must exist
+	found := false
+	for _, f := range files {
+		if f == "scenario.yaml" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("scenario.yaml missing from scaffold; got: %v", files)
+	}
+}
+
+func TestSQLiteStore_CreateScenario_DuplicateID_ReturnsError(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	err := store.CreateScenario(ctx, "alpha") // alpha already seeded
+	if err == nil {
+		t.Fatal("expected error for duplicate ID, got nil")
+	}
+}
+
+func TestSQLiteStore_GetFile_ReturnsContent(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	content, err := store.GetFile(ctx, "alpha", "setup.sh")
+	if err != nil {
+		t.Fatalf("GetFile: %v", err)
+	}
+	if content == "" {
+		t.Error("expected non-empty content for setup.sh")
+	}
+}
+
+func TestSQLiteStore_GetFile_MissingFile_ReturnsError(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	_, err := store.GetFile(ctx, "alpha", "does-not-exist.sh")
+	if err == nil {
+		t.Fatal("expected error for missing file, got nil")
+	}
+}
+
+func TestSQLiteStore_PutFile_WritesContent(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	if err := store.PutFile(ctx, "alpha", "setup.sh", "#!/bin/bash\necho updated\n"); err != nil {
+		t.Fatalf("PutFile: %v", err)
+	}
+	content, err := store.GetFile(ctx, "alpha", "setup.sh")
+	if err != nil {
+		t.Fatalf("GetFile after put: %v", err)
+	}
+	if content != "#!/bin/bash\necho updated\n" {
+		t.Errorf("content mismatch: got %q", content)
+	}
+}
+
+func TestSQLiteStore_PutFile_CreatesNewFile(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	if err := store.PutFile(ctx, "alpha", "steps/2-new.md", "# New Step\n"); err != nil {
+		t.Fatalf("PutFile new: %v", err)
+	}
+	content, err := store.GetFile(ctx, "alpha", "steps/2-new.md")
+	if err != nil {
+		t.Fatalf("GetFile new: %v", err)
+	}
+	if content != "# New Step\n" {
+		t.Errorf("got %q", content)
+	}
+}
+
+func TestSQLiteStore_ListFiles_ReturnsSortedPaths(t *testing.T) {
+	store := seededSQLiteStore(t)
+	ctx := context.Background()
+
+	files, err := store.ListFiles(ctx, "alpha")
+	if err != nil {
+		t.Fatalf("ListFiles: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("expected files, got none")
+	}
+	for i := 1; i < len(files); i++ {
+		if files[i] < files[i-1] {
+			t.Errorf("not sorted: %q before %q", files[i-1], files[i])
+		}
+	}
+}
+
 // --- Versions tests ----------------------------------------------------------
 
 func TestSQLiteStore_Versions_NewestFirst(t *testing.T) {

@@ -28,6 +28,7 @@ import (
 type server struct {
 	mgr                *session.Manager
 	scenarios          scenario.Store
+	adminScenarios     scenario.AdminStore // nil when using FSStore
 	staticFS           fs.FS
 	ttlMinutes         int
 	authStore          *auth.Store
@@ -78,9 +79,26 @@ func main() {
 		log.Printf("auth disabled: set WORKSHOP_CODE and GITHUB_CLIENT_ID to enable")
 	}
 
-	// Scenarios store: OS override for development, embedded otherwise
+	// Scenarios store: SQLite if DB_PATH set, else FS (embedded or dir override)
 	var scenariosStore scenario.Store
-	if dir := os.Getenv("SCENARIOS_DIR"); dir != "" {
+	var adminScenariosStore scenario.AdminStore
+	if dbPath := os.Getenv("DB_PATH"); dbPath != "" {
+		db, err := scenario.OpenDB(dbPath)
+		if err != nil {
+			log.Fatalf("open scenario db: %v", err)
+		}
+		sub, err := fs.Sub(labplatform.ScenariosFS, "scenarios")
+		if err != nil {
+			log.Fatalf("embedded scenarios for seeding: %v", err)
+		}
+		if err := scenario.SeedOnce(context.Background(), db, sub); err != nil {
+			log.Fatalf("seed scenarios: %v", err)
+		}
+		sqlStore := scenario.NewSQLiteStore(db)
+		scenariosStore = sqlStore
+		adminScenariosStore = sqlStore
+		log.Printf("using SQLite scenario store at %s", dbPath)
+	} else if dir := os.Getenv("SCENARIOS_DIR"); dir != "" {
 		scenariosStore = scenario.NewFSStore(os.DirFS(dir))
 		log.Printf("using scenarios from %s", dir)
 	} else {
@@ -139,6 +157,7 @@ func main() {
 	srv := &server{
 		mgr:                mgr,
 		scenarios:          scenariosStore,
+		adminScenarios:     adminScenariosStore,
 		staticFS:           staticFS,
 		ttlMinutes:         ttlMinutes,
 		authStore:          auth.NewStore(),
@@ -150,44 +169,65 @@ func main() {
 		authEnabled:        authEnabled,
 	}
 
+	log.Printf("labserver listening on :%s", port)
+	log.Fatal(http.ListenAndServe(":"+port, srv.routes()))
+}
+
+// routes builds the mux and wraps it with authMiddleware.
+// Extracted from main() so tests can build the full HTTP stack without starting
+// a real server.
+func (s *server) routes() http.Handler {
 	mux := http.NewServeMux()
 
 	// Auth routes (always public)
-	mux.HandleFunc("GET /login", srv.loginPage)
-	mux.HandleFunc("POST /login", srv.loginSubmit)
-	mux.HandleFunc("GET /auth/github", srv.authGitHub)
-	mux.HandleFunc("GET /auth/callback", srv.authCallback)
+	mux.HandleFunc("GET /login", s.loginPage)
+	mux.HandleFunc("POST /login", s.loginSubmit)
+	mux.HandleFunc("GET /auth/github", s.authGitHub)
+	mux.HandleFunc("GET /auth/callback", s.authCallback)
 
 	// Health check (always public)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
 
 	// Protected API routes
-	mux.HandleFunc("GET /api/config", srv.getConfig)
-	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
-	mux.HandleFunc("GET /api/scenarios/{id}", srv.getScenario)
-	mux.HandleFunc("POST /api/sessions", srv.createSession)
-	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
-	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
-	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
-	mux.HandleFunc("POST /t/{id}/navigate", srv.navigateBrowser)
-	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
-	mux.HandleFunc("GET /api/sessions/{id}/services", srv.sessionServices)
-	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
-	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
-	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
-	mux.HandleFunc("GET /ide/{id}", srv.idePage)
-	mux.HandleFunc("/ide-api/{id}/", srv.ideFileProxy)
+	mux.HandleFunc("GET /api/config", s.getConfig)
+	mux.HandleFunc("GET /api/scenarios", s.listScenarios)
+	mux.HandleFunc("GET /api/scenarios/{id}", s.getScenario)
+	mux.HandleFunc("POST /api/sessions", s.createSession)
+	mux.HandleFunc("GET /api/sessions/{id}", s.getSession)
+	mux.HandleFunc("DELETE /api/sessions/{id}", s.deleteSession)
+	mux.HandleFunc("POST /t/{id}/cmd", s.injectCmd)
+	mux.HandleFunc("POST /t/{id}/navigate", s.navigateBrowser)
+	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", s.verifyStep)
+	mux.HandleFunc("GET /api/sessions/{id}/services", s.sessionServices)
+	mux.HandleFunc("/t/{id}/", s.terminalProxy)
+	mux.HandleFunc("/t/{id}/shell/", s.shellProxy)
+	mux.HandleFunc("/vnc/{id}/", s.browserProxy)
+	mux.HandleFunc("GET /ide/{id}", s.idePage)
+	mux.HandleFunc("/ide-api/{id}/", s.ideFileProxy)
 
 	// Admin routes
-	mux.HandleFunc("GET /api/admin/sessions", srv.adminListSessions)
-	mux.HandleFunc("DELETE /api/admin/sessions/{id}", srv.adminDeleteSession)
-	mux.HandleFunc("GET /admin", srv.adminPage)
+	mux.HandleFunc("GET /api/admin/sessions", s.adminListSessions)
+	mux.HandleFunc("DELETE /api/admin/sessions/{id}", s.adminDeleteSession)
+	mux.HandleFunc("GET /admin", s.adminPage)
+
+	// Admin scenario routes
+	mux.HandleFunc("GET /api/admin/scenarios", s.adminListScenarios)
+	mux.HandleFunc("POST /api/admin/scenarios", s.adminCreateScenario)
+	mux.HandleFunc("GET /api/admin/scenarios/{id}", s.adminGetScenario)
+	mux.HandleFunc("POST /api/admin/scenarios/{id}/publish", s.adminPublishScenario)
+	mux.HandleFunc("POST /api/admin/scenarios/{id}/unpublish", s.adminUnpublishScenario)
+	mux.HandleFunc("GET /api/admin/scenarios/{id}/versions", s.adminListVersions)
+	mux.HandleFunc("POST /api/admin/scenarios/{id}/versions/{versionId}/restore", s.adminRestoreVersion)
+	mux.HandleFunc("GET /api/admin/scenarios/{id}/files", s.adminListFiles)
+	mux.HandleFunc("GET /api/admin/scenarios/{id}/files/{path...}", s.adminGetFile)
+	mux.HandleFunc("PUT /api/admin/scenarios/{id}/files/{path...}", s.adminPutFile)
+	mux.HandleFunc("POST /api/admin/lint/shell", s.adminLintShell)
+	mux.HandleFunc("GET /admin/scenarios/{id}/edit", s.adminScenarioEditorPage)
 
 	// Static file server (catch-all)
-	mux.Handle("/", http.FileServerFS(staticFS))
+	mux.Handle("/", http.FileServerFS(s.staticFS))
 
-	log.Printf("labserver listening on :%s", port)
-	log.Fatal(http.ListenAndServe(":"+port, srv.authMiddleware(mux)))
+	return s.authMiddleware(mux)
 }
 
 // ── Auth middleware ───────────────────────────────────────────────────────────
