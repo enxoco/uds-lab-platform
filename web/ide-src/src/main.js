@@ -37,6 +37,9 @@ editor = monaco.editor.create(document.getElementById('editor-container'), {
   automaticLayout: true,
   renderWhitespace: 'selection',
   tabSize: 2,
+  quickSuggestions: { other: true, comments: false, strings: true },
+  suggestOnTriggerCharacters: true,
+  acceptSuggestionOnEnter: 'on',
 })
 editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, saveFile)
 editor.onDidChangeModelContent(() => {
