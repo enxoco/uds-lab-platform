@@ -55,6 +55,7 @@ type userDataInput struct {
 	VerifyScripts  map[string]string
 	BrowserEnabled bool
 	InjectPy       string
+	SessionID      string
 }
 
 func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Session, error) {
@@ -131,17 +132,18 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 		}
 	}
 
+	id := uuid.New().String()
+
 	var userData bytes.Buffer
 	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
 		SetupSh:        string(setupSh),
 		VerifyScripts:  verifyScripts,
 		BrowserEnabled: browserEnabled,
 		InjectPy:       m.vmCfg.InjectPy,
+		SessionID:      id,
 	}); err != nil {
 		return nil, fmt.Errorf("render user-data: %w", err)
 	}
-
-	id := uuid.New().String()
 	now := time.Now()
 
 	serverType := m.vmCfg.ServerType

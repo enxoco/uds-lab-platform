@@ -1,0 +1,4 @@
+uds-labs.hackanooga.com {
+    reverse_proxy labserver:8080
+    encode gzip
+}

@@ -13,3 +13,5 @@ bin/
 *.sarif.json
 witness-key.pem
 witness-pub.pem
+web/static/ide-assets/
+web/ide-src/node_modules/

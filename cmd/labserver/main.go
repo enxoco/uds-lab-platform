@@ -175,6 +175,8 @@ func main() {
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
+	mux.HandleFunc("GET /ide/{id}", srv.idePage)
+	mux.HandleFunc("/ide-api/{id}/", srv.ideFileProxy)
 
 	// Admin routes
 	mux.HandleFunc("GET /api/admin/sessions", srv.adminListSessions)
@@ -219,7 +221,8 @@ func (s *server) authMiddleware(next http.Handler) http.Handler {
 }
 
 func (s *server) unauthResponse(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/t/") || strings.HasPrefix(r.URL.Path, "/vnc/") {
+	p := r.URL.Path
+	if strings.HasPrefix(p, "/api/") || strings.HasPrefix(p, "/t/") || strings.HasPrefix(p, "/vnc/") || strings.HasPrefix(p, "/ide-api/") {
 		jsonError(w, "unauthorized", http.StatusUnauthorized)
 	} else {
 		http.Redirect(w, r, "/login", http.StatusFound)
@@ -683,6 +686,33 @@ func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proxy.Handler(fmt.Sprintf("http://%s:6080", sess.VMIP), fmt.Sprintf("/vnc/%s", id)).ServeHTTP(w, r)
+}
+
+func (s *server) idePage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, ok := s.mgr.Get(id); !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	http.ServeFileFS(w, r, s.staticFS, "ide.html")
+}
+
+func (s *server) ideFileProxy(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if sess.Status != session.StatusReady {
+		http.Error(w, "IDE not ready", http.StatusServiceUnavailable)
+		return
+	}
+	proxy.Handler(fmt.Sprintf("http://%s:7680", sess.VMIP), fmt.Sprintf("/ide-api/%s", id)).ServeHTTP(w, r)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
