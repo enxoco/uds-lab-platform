@@ -44,7 +44,7 @@ type Summary struct {
 	Playground  bool   `json:"playground"`
 }
 
-func Load(fsys fs.FS, id string) (*Scenario, error) {
+func fsLoad(fsys fs.FS, id string) (*Scenario, error) {
 	data, err := fs.ReadFile(fsys, id+"/scenario.yaml")
 	if err != nil {
 		return nil, fmt.Errorf("scenario %q not found: %w", id, err)
@@ -68,7 +68,7 @@ func Load(fsys fs.FS, id string) (*Scenario, error) {
 	return &s, nil
 }
 
-func ListSummaries(fsys fs.FS) ([]Summary, error) {
+func fsListSummaries(fsys fs.FS) ([]Summary, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, err
@@ -79,7 +79,7 @@ func ListSummaries(fsys fs.FS) ([]Summary, error) {
 		if !e.IsDir() {
 			continue
 		}
-		s, err := Load(fsys, e.Name())
+		s, err := fsLoad(fsys, e.Name())
 		if err != nil {
 			continue
 		}

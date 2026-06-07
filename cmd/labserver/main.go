@@ -27,7 +27,7 @@ import (
 
 type server struct {
 	mgr                *session.Manager
-	scenariosFS        fs.FS
+	scenarios          scenario.Store
 	staticFS           fs.FS
 	ttlMinutes         int
 	authStore          *auth.Store
@@ -78,17 +78,17 @@ func main() {
 		log.Printf("auth disabled: set WORKSHOP_CODE and GITHUB_CLIENT_ID to enable")
 	}
 
-	// Scenarios FS: OS override for development, embedded otherwise
-	var scenariosFS fs.FS
+	// Scenarios store: OS override for development, embedded otherwise
+	var scenariosStore scenario.Store
 	if dir := os.Getenv("SCENARIOS_DIR"); dir != "" {
-		scenariosFS = os.DirFS(dir)
+		scenariosStore = scenario.NewFSStore(os.DirFS(dir))
 		log.Printf("using scenarios from %s", dir)
 	} else {
 		sub, err := fs.Sub(labplatform.ScenariosFS, "scenarios")
 		if err != nil {
 			log.Fatalf("embedded scenarios: %v", err)
 		}
-		scenariosFS = sub
+		scenariosStore = scenario.NewFSStore(sub)
 	}
 
 	// Static files FS: OS override for development
@@ -131,14 +131,14 @@ func main() {
 			Image:        vmImage,
 			SSHKeyNames:  []string{"local"},
 			UserDataTmpl: udTmpl,
-			ScenariosFS:  scenariosFS,
+			Scenarios:    scenariosStore,
 			InjectPy:     string(injectPy),
 		},
 	)
 
 	srv := &server{
 		mgr:                mgr,
-		scenariosFS:        scenariosFS,
+		scenarios:          scenariosStore,
 		staticFS:           staticFS,
 		ttlMinutes:         ttlMinutes,
 		authStore:          auth.NewStore(),
@@ -452,7 +452,7 @@ func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
-	summaries, err := scenario.ListSummaries(s.scenariosFS)
+	summaries, err := s.scenarios.List(r.Context())
 	if err != nil {
 		jsonError(w, "cannot read scenarios", http.StatusInternalServerError)
 		return
@@ -461,7 +461,7 @@ func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) getScenario(w http.ResponseWriter, r *http.Request) {
-	sc, err := scenario.Load(s.scenariosFS, r.PathValue("id"))
+	sc, err := s.scenarios.Get(r.Context(), r.PathValue("id"))
 	if err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
 		return
@@ -634,7 +634,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sc, err := scenario.Load(s.scenariosFS, sess.Scenario)
+	sc, err := s.scenarios.Get(r.Context(), sess.Scenario)
 	var services []scenario.ServiceLink
 	if err == nil && len(sc.Services) > 0 {
 		services = sc.Services

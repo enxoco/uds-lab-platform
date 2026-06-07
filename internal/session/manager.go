@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"io/fs"
 	"log"
 	"net/http"
 	"strings"
@@ -13,8 +12,8 @@ import (
 	"time"
 
 	"github.com/enxoco/uds-lab-platform/internal/hetzner"
+	"github.com/enxoco/uds-lab-platform/internal/scenario"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
 )
 
 type VMConfig struct {
@@ -23,7 +22,7 @@ type VMConfig struct {
 	Image        string
 	SSHKeyNames  []string
 	UserDataTmpl *template.Template
-	ScenariosFS  fs.FS
+	Scenarios    scenario.Store
 	InjectPy     string
 }
 
@@ -68,30 +67,15 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 	}
 	m.mu.RUnlock()
 
-	setupSh, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/setup.sh")
+	vmData, err := m.vmCfg.Scenarios.GetVMData(ctx, scenario)
 	if err != nil {
-		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
+		return nil, fmt.Errorf("load scenario %q: %w", scenario, err)
 	}
 
-	// Read flags from scenario.yaml
-	browserEnabled := false
-	isPlayground := false
-	imageOverride := ""
-	serverTypeOverride := ""
-	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
-		var meta struct {
-			Browser    bool   `yaml:"browser"`
-			Playground bool   `yaml:"playground"`
-			Image      string `yaml:"image"`
-			ServerType string `yaml:"serverType"`
-		}
-		if yaml.Unmarshal(yamlData, &meta) == nil {
-			browserEnabled = meta.Browser
-			isPlayground = meta.Playground
-			imageOverride = meta.Image
-			serverTypeOverride = meta.ServerType
-		}
-	}
+	browserEnabled := vmData.Browser
+	isPlayground := vmData.Playground
+	imageOverride := vmData.Image
+	serverTypeOverride := vmData.ServerType
 
 	var vmImage string
 
@@ -119,25 +103,12 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 
 	log.Printf("create session: scenario=%s image=%s", scenario, vmImage)
 
-	verifyScripts := map[string]string{}
-	if entries, err := fs.ReadDir(m.vmCfg.ScenariosFS, scenario+"/verify"); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			content, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/verify/"+e.Name())
-			if err == nil {
-				verifyScripts[e.Name()] = string(content)
-			}
-		}
-	}
-
 	id := uuid.New().String()
 
 	var userData bytes.Buffer
 	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
-		SetupSh:        string(setupSh),
-		VerifyScripts:  verifyScripts,
+		SetupSh:        vmData.SetupSh,
+		VerifyScripts:  vmData.VerifyScripts,
 		BrowserEnabled: browserEnabled,
 		InjectPy:       m.vmCfg.InjectPy,
 		SessionID:      id,

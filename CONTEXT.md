@@ -70,7 +70,28 @@ A per-Step bash script that validates the user has completed a Step correctly. E
 Code blocks in Step markdown that, when clicked in the Lab UI, inject the command directly into the Lab Terminal via tmux `send-keys`. No confirmation prompt — these are ephemeral environments. Click-to-Run blocks are the primary mechanism for guiding users through hands-on steps.
 
 ### Scenario Author
-An engineer who writes Scenarios or Playgrounds. Currently an internal Defense Unicorns role; intent is to open this to external contributors as the platform matures.
+Any Admin who creates or edits Scenarios. Admin and Scenario Author roles are collapsed — all Admins are implicitly Authors. External contributor model is deferred.
+
+### Scenario Store
+The SQLite-backed mutable store for Scenarios. Seeded from the embedded `scenarios/` directory on first boot. Persisted to a Docker volume at `DB_PATH` (default `/data/lab.db`). Source of truth for all Scenario content at runtime — the embedded FS is a bootstrap seed only.
+
+### Scenario Version
+A full point-in-time snapshot of all files in a Scenario: `scenario.yaml`, all Step markdown files, `setup.sh`, all Verify scripts, and optional `intro.md`/`finish.md`. Versions are immutable once created. Every save operation in the editor creates a new Version. Admins can roll back to any previous Version.
+
+### Draft
+A Scenario state in which edits are only visible to Admins. Participants cannot see or start a Draft Scenario. All new and in-progress edits exist in Draft until explicitly published. The default state for newly created Scenarios.
+
+### Published
+A Scenario state in which it is visible to Participants in the catalog and can be started as a Lab. Publishing creates a new Scenario Version from the current Draft state. Admins can unpublish at any time, returning the Scenario to Draft.
+
+### Scenario Pull
+An Admin-initiated operation that imports Scenario directories from a GitHub repository into the Scenario Store, creating a new Scenario Version for each scenario found. Does not overwrite Published state — imported scenarios land as Drafts pending explicit publish. Prior versions are preserved for rollback.
+
+### Scenario Export
+An Admin-initiated operation that pushes the current Scenario Store state for one or more Scenarios to a GitHub repository as a commit. Requires a GitHub App with write access to the target repo. Export does not affect the Scenario's Published/Draft state.
+
+### GitHub App
+The GitHub App used by labserver for Scenario Pull and Scenario Export operations. Configured via `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY` (base64-encoded PEM), `GITHUB_APP_INSTALLATION_ID`, and `GITHUB_APP_WEBHOOK_SECRET` env vars. The App subscribes to Push events on the scenarios repo, enabling auto-pull on commit via the `/api/admin/scenarios/webhook` endpoint.
 
 ---
 
