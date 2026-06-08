@@ -71,9 +71,55 @@
     .versions-drawer tr:last-child td { border-bottom: none; }
     .v-comment { font-family: var(--mono); color: var(--text-muted); }
     .no-versions { color: var(--text-muted); font-size: 12px; padding: 8px 0; }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .modal-backdrop.hidden { display: none; }
+    .modal-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 24px 28px; min-width: 360px; max-width: 480px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    }
+    .modal-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .modal-body  { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
+    .modal-input {
+      width: 100%; box-sizing: border-box;
+      padding: 8px 10px; font-size: 13px; font-family: var(--mono);
+      background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius);
+      color: var(--text); outline: none; margin-bottom: 6px;
+    }
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-hint { font-size: 11px; color: var(--text-muted); margin-bottom: 16px; }
+    .modal-error { font-size: 12px; color: var(--danger); margin-bottom: 12px; min-height: 16px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-modal-cancel { background: transparent; border-color: var(--border); color: var(--text-muted); }
+    .btn-modal-cancel:hover { border-color: var(--text); color: var(--text); }
+    .btn-modal-confirm { background: transparent; border-color: var(--danger); color: var(--danger); }
+    .btn-modal-confirm:hover { background: var(--danger); color: #fff; }
+    .btn-modal-primary { background: transparent; border-color: var(--accent); color: var(--accent); }
+    .btn-modal-primary:hover { background: var(--accent); color: #000; }
   </style>
 </head>
 <body>
+  <!-- Modal -->
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal-card" id="modal-card">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body"  id="modal-body"></div>
+      <input class="modal-input hidden" id="modal-input" type="text" autocomplete="off" />
+      <div class="modal-hint hidden" id="modal-hint"></div>
+      <div class="modal-error" id="modal-error"></div>
+      <div class="modal-actions">
+        <button class="btn btn-modal-cancel" id="modal-cancel">Cancel</button>
+        <button class="btn btn-modal-primary" id="modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <nav>
     <span class="logo">UDS Labs</span>
     <span class="admin-badge">Admin</span>
@@ -96,6 +142,67 @@
   </div>
 
   <script>
+    // ── Modal helpers ────────────────────────────────────────────────────────
+    function _modalClose() { document.getElementById('modal-backdrop').classList.add('hidden'); }
+
+    function showConfirm(title, body, {onOk, danger = true} = {}) {
+      const backdrop = document.getElementById('modal-backdrop');
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-body').textContent = body;
+      document.getElementById('modal-input').classList.add('hidden');
+      document.getElementById('modal-hint').classList.add('hidden');
+      document.getElementById('modal-error').textContent = '';
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.textContent = 'Confirm';
+      okBtn.className = `btn ${danger ? 'btn-modal-confirm' : 'btn-modal-primary'}`;
+      okBtn.disabled = false;
+      backdrop.classList.remove('hidden');
+      okBtn.onclick = () => { _modalClose(); onOk?.(); };
+      document.getElementById('modal-cancel').onclick = _modalClose;
+      backdrop.onclick = e => { if (e.target === backdrop) _modalClose(); };
+    }
+
+    function showInput(title, {hint = '', placeholder = '', onSubmit} = {}) {
+      const backdrop = document.getElementById('modal-backdrop');
+      document.getElementById('modal-title').textContent = title;
+      document.getElementById('modal-body').textContent = '';
+      const input = document.getElementById('modal-input');
+      input.value = '';
+      input.placeholder = placeholder;
+      input.classList.remove('hidden');
+      const hintEl = document.getElementById('modal-hint');
+      hintEl.textContent = hint;
+      hintEl.classList.toggle('hidden', !hint);
+      const errEl = document.getElementById('modal-error');
+      errEl.textContent = '';
+      const okBtn = document.getElementById('modal-ok');
+      okBtn.textContent = 'Create';
+      okBtn.className = 'btn btn-modal-primary';
+      okBtn.disabled = false;
+      backdrop.classList.remove('hidden');
+      setTimeout(() => input.focus(), 50);
+
+      async function trySubmit() {
+        const val = input.value.trim();
+        if (!val) { errEl.textContent = 'Required.'; return; }
+        errEl.textContent = '';
+        okBtn.disabled = true; okBtn.textContent = 'Creating…';
+        const err = await onSubmit(val);
+        if (err) {
+          errEl.textContent = err;
+          okBtn.disabled = false; okBtn.textContent = 'Create';
+        } else {
+          _modalClose();
+        }
+      }
+
+      okBtn.onclick = trySubmit;
+      input.onkeydown = e => { if (e.key === 'Enter') trySubmit(); };
+      document.getElementById('modal-cancel').onclick = _modalClose;
+      backdrop.onclick = e => { if (e.target === backdrop) _modalClose(); };
+    }
+    // ── End modal helpers ────────────────────────────────────────────────────
+
     // ── Tab switching ────────────────────────────────────────────────────────
     let activeTab = 'sessions';
     function switchTab(name) {
@@ -150,11 +257,19 @@
         </table>`;
     }
 
-    async function terminate(id, btn) {
-      if (!confirm('Terminate this session? The VM will be destroyed and the user will be logged out.')) return;
-      btn.disabled = true; btn.textContent = 'Terminating…';
-      await fetch(`/api/admin/sessions/${id}`, { method: 'DELETE' });
-      loadSessions();
+    function terminate(id, btn) {
+      showConfirm(
+        'Terminate session',
+        'The VM will be destroyed and the user will be logged out. This cannot be undone.',
+        {
+          danger: true,
+          onOk: async () => {
+            btn.disabled = true; btn.textContent = 'Terminating…';
+            await fetch(`/api/admin/sessions/${id}`, { method: 'DELETE' });
+            loadSessions();
+          }
+        }
+      );
     }
 
     // ── Scenarios ────────────────────────────────────────────────────────────
@@ -259,25 +374,49 @@
       row.insertAdjacentElement('afterend', drawerRow);
     }
 
-    async function newScenario() {
-      const id = prompt('Scenario ID (slug, e.g. my-new-scenario):');
-      if (!id) return;
-      const res = await fetch('/api/admin/scenarios', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id }),
+    function newScenario() {
+      showInput('New scenario', {
+        hint: 'Lowercase letters, digits, and hyphens only.',
+        placeholder: 'my-new-scenario',
+        onSubmit: async (id) => {
+          const res = await fetch('/api/admin/scenarios', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          });
+          if (res.status === 409) return `Scenario "${id}" already exists.`;
+          if (!res.ok) return 'Failed to create scenario.';
+          window.location.href = `/admin/scenarios/${encodeURIComponent(id)}/edit`;
+          return null;
+        }
       });
-      if (res.status === 409) { alert(`Scenario "${id}" already exists.`); return; }
-      if (!res.ok) { alert('Failed to create scenario'); return; }
-      window.location.href = `/admin/scenarios/${encodeURIComponent(id)}/edit`;
     }
 
-    async function restoreVersion(scenarioId, versionId, btn) {
-      if (!confirm(`Restore scenario to version ${versionId}? Current files will be snapshot-ed first.`)) return;
-      btn.disabled = true; btn.textContent = 'Restoring…';
-      const res = await fetch(`/api/admin/scenarios/${scenarioId}/versions/${versionId}/restore`, { method: 'POST' });
-      if (!res.ok) { btn.disabled = false; btn.textContent = 'Restore'; alert('Restore failed'); return; }
-      loadScenarios();
+    function restoreVersion(scenarioId, versionId, btn) {
+      showConfirm(
+        'Restore version',
+        `Roll back to version ${versionId}? Current files will be snapshotted first.`,
+        {
+          danger: false,
+          onOk: async () => {
+            btn.disabled = true; btn.textContent = 'Restoring…';
+            const res = await fetch(`/api/admin/scenarios/${scenarioId}/versions/${versionId}/restore`, { method: 'POST' });
+            if (!res.ok) {
+              btn.disabled = false; btn.textContent = 'Restore';
+              const errSpan = btn.parentElement.querySelector('.restore-err') || (() => {
+                const s = document.createElement('span');
+                s.className = 'restore-err';
+                s.style.cssText = 'color:var(--danger);font-size:11px;margin-left:6px';
+                btn.after(s);
+                return s;
+              })();
+              errSpan.textContent = 'Restore failed';
+              return;
+            }
+            loadScenarios();
+          }
+        }
+      );
     }
 
     // ── Boot ─────────────────────────────────────────────────────────────────
