@@ -106,7 +106,10 @@
   </div>
   <div class="ide-body">
     <div class="tree-panel">
-      <div class="tree-header">Files</div>
+      <div class="tree-header" style="display:flex;align-items:center">
+        <span>Files</span>
+        <button id="btn-new-file" title="New file" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;padding:0 2px">+</button>
+      </div>
       <div id="tree"></div>
     </div>
     <div class="editor-wrap">

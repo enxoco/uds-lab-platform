@@ -278,8 +278,28 @@ function getLang(path) {
   })[ext] || 'plaintext'
 }
 
-// expose for inline HTML handlers
+async function newFile() {
+  const path = prompt('File path (e.g. steps/2-second.md, verify/step2.sh):')
+  if (!path || !path.trim()) return
+  const clean = path.trim().replace(/^\/+/, '')
+  if (!clean) return
+
+  // Create via PUT with empty content — backend upserts.
+  const res = await fetch(`${API}/files/${clean}`, {
+    method: 'PUT',
+    body: '',
+    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+  })
+  if (!res.ok) { alert('Failed to create file'); return }
+
+  await loadTree()
+  // Small delay so tree re-renders before we try to highlight.
+  setTimeout(() => openFile(clean), 50)
+}
+
+// expose for inline HTML handlers (save button uses onclick)
 window.saveFile = saveFile
 
 // ── Boot ─────────────────────────────────────────────────────────────────────
+document.getElementById('btn-new-file').addEventListener('click', newFile)
 loadTree()
