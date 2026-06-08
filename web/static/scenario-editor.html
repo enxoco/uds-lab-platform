@@ -91,9 +91,57 @@
     /* ── Empty state ── */
     .no-file { display: flex; align-items: center; justify-content: center; height: 100%; color: var(--text-muted); font-size: 13px; flex-direction: column; gap: 8px; flex: 1; }
     .no-file span { font-size: 32px; }
+
+    /* ── Modal ── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(0,0,0,.55);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 1000;
+    }
+    .modal-backdrop.hidden { display: none; }
+    .modal-card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 24px 28px; min-width: 360px; max-width: 480px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    }
+    .modal-title { font-size: 15px; font-weight: 600; margin-bottom: 8px; }
+    .modal-body  { font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5; }
+    .modal-input {
+      width: 100%; box-sizing: border-box;
+      padding: 8px 10px; font-size: 13px; font-family: var(--mono);
+      background: var(--bg); border: 1px solid var(--border); border-radius: 4px;
+      color: var(--text); outline: none; margin-bottom: 6px;
+    }
+    .modal-input:focus { border-color: var(--accent); }
+    .modal-hint  { font-size: 11px; color: var(--text-muted); margin-bottom: 16px; }
+    .modal-error { font-size: 12px; color: var(--danger); margin-bottom: 12px; min-height: 16px; }
+    .modal-actions { display: flex; gap: 8px; justify-content: flex-end; }
+    .btn-m { padding: 5px 14px; font-size: 12px; border-radius: 4px; cursor: pointer; border: 1px solid; background: transparent; }
+    .btn-m-cancel  { border-color: var(--border); color: var(--text-muted); }
+    .btn-m-cancel:hover  { border-color: var(--text); color: var(--text); }
+    .btn-m-danger  { border-color: var(--danger); color: var(--danger); }
+    .btn-m-danger:hover  { background: var(--danger); color: #fff; }
+    .btn-m-primary { border-color: var(--accent); color: var(--accent); }
+    .btn-m-primary:hover { background: var(--accent); color: #000; }
+    .btn-m:disabled { opacity: .4; cursor: default; }
   </style>
 </head>
 <body>
+  <!-- Modal -->
+  <div class="modal-backdrop hidden" id="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-title" id="modal-title"></div>
+      <div class="modal-body"  id="modal-body"></div>
+      <input class="modal-input hidden" id="modal-input" type="text" autocomplete="off" />
+      <div class="modal-hint hidden" id="modal-hint"></div>
+      <div class="modal-error" id="modal-error"></div>
+      <div class="modal-actions">
+        <button class="btn-m btn-m-cancel"  id="modal-cancel">Cancel</button>
+        <button class="btn-m btn-m-primary" id="modal-ok">OK</button>
+      </div>
+    </div>
+  </div>
+
   <div class="ide-bar">
     <a class="back" href="/admin">← Admin</a>
     <span class="sep">|</span>

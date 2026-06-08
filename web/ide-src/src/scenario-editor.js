@@ -142,13 +142,83 @@ function fileIcon(name) {
   return map[ext] || { text: ext.slice(0, 4).toUpperCase() || '·', cls: 'fb-file' }
 }
 
-// ── Open / save ──────────────────────────────────────────────────────────────
-async function openFile(path) {
-  if (dirty && currentPath) {
-    if (!confirm(`Discard unsaved changes to ${currentPath.split('/').pop()}?`)) return
+// ── Modal helpers ────────────────────────────────────────────────────────────
+function _modalClose() { document.getElementById('modal-backdrop').classList.add('hidden') }
+
+function showConfirm(title, body, { onOk, danger = true } = {}) {
+  const backdrop = document.getElementById('modal-backdrop')
+  document.getElementById('modal-title').textContent = title
+  document.getElementById('modal-body').textContent = body
+  document.getElementById('modal-input').classList.add('hidden')
+  document.getElementById('modal-hint').classList.add('hidden')
+  document.getElementById('modal-error').textContent = ''
+  const okBtn = document.getElementById('modal-ok')
+  okBtn.textContent = 'Confirm'
+  okBtn.className = `btn-m ${danger ? 'btn-m-danger' : 'btn-m-primary'}`
+  okBtn.disabled = false
+  backdrop.classList.remove('hidden')
+  okBtn.onclick = () => { _modalClose(); onOk?.() }
+  document.getElementById('modal-cancel').onclick = _modalClose
+  backdrop.onclick = e => { if (e.target === backdrop) _modalClose() }
+}
+
+function showInput(title, { hint = '', placeholder = '', onSubmit } = {}) {
+  const backdrop = document.getElementById('modal-backdrop')
+  document.getElementById('modal-title').textContent = title
+  document.getElementById('modal-body').textContent = ''
+  const input = document.getElementById('modal-input')
+  input.value = ''
+  input.placeholder = placeholder
+  input.classList.remove('hidden')
+  const hintEl = document.getElementById('modal-hint')
+  hintEl.textContent = hint
+  hintEl.classList.toggle('hidden', !hint)
+  const errEl = document.getElementById('modal-error')
+  errEl.textContent = ''
+  const okBtn = document.getElementById('modal-ok')
+  okBtn.textContent = 'Create'
+  okBtn.className = 'btn-m btn-m-primary'
+  okBtn.disabled = false
+  backdrop.classList.remove('hidden')
+  setTimeout(() => input.focus(), 50)
+
+  async function trySubmit() {
+    const val = input.value.trim()
+    if (!val) { errEl.textContent = 'Required.'; return }
+    errEl.textContent = ''
+    okBtn.disabled = true; okBtn.textContent = 'Creating…'
+    const err = await onSubmit(val)
+    if (err) {
+      errEl.textContent = err
+      okBtn.disabled = false; okBtn.textContent = 'Create'
+    } else {
+      _modalClose()
+    }
   }
+
+  okBtn.onclick = trySubmit
+  input.onkeydown = e => { if (e.key === 'Enter') trySubmit() }
+  document.getElementById('modal-cancel').onclick = _modalClose
+  backdrop.onclick = e => { if (e.target === backdrop) _modalClose() }
+}
+// ── End modal helpers ────────────────────────────────────────────────────────
+
+// ── Open / save ──────────────────────────────────────────────────────────────
+function openFile(path) {
+  if (dirty && currentPath) {
+    showConfirm(
+      'Discard changes',
+      `Unsaved changes to ${currentPath.split('/').pop()} will be lost.`,
+      { danger: true, onOk: () => _loadFile(path) }
+    )
+  } else {
+    _loadFile(path)
+  }
+}
+
+async function _loadFile(path) {
   const res = await fetch(`${API}/files/${path}`)
-  if (!res.ok) { alert('Cannot open file'); return }
+  if (!res.ok) { setStatus(`Cannot open ${path}`); return }
   const text = await res.text()
 
   currentPath = path
@@ -164,7 +234,6 @@ async function openFile(path) {
   editor.setModel(model)
   if (old) old.dispose()
 
-  // Show/hide preview pane for markdown
   const isMarkdown = path.endsWith('.md')
   document.getElementById('preview-pane').style.display = isMarkdown ? '' : 'none'
   document.getElementById('editor-container').style.flex = isMarkdown ? '1' : ''
@@ -278,23 +347,24 @@ function getLang(path) {
   })[ext] || 'plaintext'
 }
 
-async function newFile() {
-  const path = prompt('File path (e.g. steps/2-second.md, verify/step2.sh):')
-  if (!path || !path.trim()) return
-  const clean = path.trim().replace(/^\/+/, '')
-  if (!clean) return
-
-  // Create via PUT with empty content — backend upserts.
-  const res = await fetch(`${API}/files/${clean}`, {
-    method: 'PUT',
-    body: '',
-    headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+function newFile() {
+  showInput('New file', {
+    hint: 'Examples: steps/2-second.md, verify/step2.sh',
+    placeholder: 'steps/2-second.md',
+    onSubmit: async (rawPath) => {
+      const path = rawPath.replace(/^\/+/, '')
+      if (!path) return 'Required.'
+      const res = await fetch(`${API}/files/${path}`, {
+        method: 'PUT',
+        body: '',
+        headers: { 'Content-Type': 'text/plain; charset=utf-8' },
+      })
+      if (!res.ok) return 'Failed to create file.'
+      await loadTree()
+      setTimeout(() => openFile(path), 50)
+      return null
+    }
   })
-  if (!res.ok) { alert('Failed to create file'); return }
-
-  await loadTree()
-  // Small delay so tree re-renders before we try to highlight.
-  setTimeout(() => openFile(clean), 50)
 }
 
 // expose for inline HTML handlers (save button uses onclick)
