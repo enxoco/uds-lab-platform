@@ -27,6 +27,11 @@ jobs:
           cache: false
       - name: Install golangci-lint
         run: curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh | sh -s -- -b /usr/local/bin
+      - run: |
+          uds run olm:generate-fulcio-token \
+            --with olm_cat="cat-api.uds-mil.us" \
+            --with olm_org="uds-army-demo" \
+            --with github_token="${{ secrets.GITHUB_TOKEN }}"
       - name: Lint
         run: uds run attest:lint
       - name: Security scan

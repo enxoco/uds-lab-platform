@@ -12,7 +12,7 @@ import (
 	"text/template"
 	"time"
 
-	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
+	"github.com/enxoco/uds-lab-platform/internal/hetzner"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 )
@@ -55,6 +55,7 @@ type userDataInput struct {
 	VerifyScripts  map[string]string
 	BrowserEnabled bool
 	InjectPy       string
+	SessionID      string
 }
 
 func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Session, error) {
@@ -131,17 +132,18 @@ func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Sessi
 		}
 	}
 
+	id := uuid.New().String()
+
 	var userData bytes.Buffer
 	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
 		SetupSh:        string(setupSh),
 		VerifyScripts:  verifyScripts,
 		BrowserEnabled: browserEnabled,
 		InjectPy:       m.vmCfg.InjectPy,
+		SessionID:      id,
 	}); err != nil {
 		return nil, fmt.Errorf("render user-data: %w", err)
 	}
-
-	id := uuid.New().String()
 	now := time.Now()
 
 	serverType := m.vmCfg.ServerType
@@ -187,6 +189,16 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	defer m.mu.RUnlock()
 	s, ok := m.sessions[id]
 	return s, ok
+}
+
+func (m *Manager) All() []*Session {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]*Session, 0, len(m.sessions))
+	for _, s := range m.sessions {
+		out = append(out, s)
+	}
+	return out
 }
 
 func (m *Manager) Delete(ctx context.Context, id string) error {
