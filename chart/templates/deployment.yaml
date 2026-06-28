@@ -1,3 +1,109 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lab-platform
+  namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-platform-server
+  namespace: {{ .Values.vmNamespace }}
+rules:
+  - apiGroups: ["lab.uds.dev"]
+    resources: ["labsessions"]
+    verbs: ["create", "get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-platform-server
+  namespace: {{ .Values.vmNamespace }}
+subjects:
+  - kind: ServiceAccount
+    name: lab-platform
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: lab-platform-server
+  apiGroup: rbac.authorization.k8s.io
+---
+# Operator: cluster-wide watch for all managed resource types.
+# controller-runtime initializes cluster-scoped informers for all scheme types it accesses.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-operator-watch
+rules:
+  - apiGroups: ["lab.uds.dev"]
+    resources: ["labsessions", "labsessions/status"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lab-operator-watch
+subjects:
+  - kind: ServiceAccount
+    name: lab-platform
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: ClusterRole
+  name: lab-operator-watch
+  apiGroup: rbac.authorization.k8s.io
+---
+# Operator: write access to VM resources in vmNamespace only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-operator
+  namespace: {{ .Values.vmNamespace }}
+rules:
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["create", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "watch", "update", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: lab-operator
+  namespace: {{ .Values.vmNamespace }}
+subjects:
+  - kind: ServiceAccount
+    name: lab-platform
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  kind: Role
+  name: lab-operator
+  apiGroup: rbac.authorization.k8s.io
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -13,17 +119,18 @@ spec:
       labels:
         app: lab-platform
     spec:
+      serviceAccountName: lab-platform
       containers:
         - name: lab-platform
           image: {{ .Values.image }}
+          imagePullPolicy: Always
           ports:
             - containerPort: 8080
           env:
-            - name: HCLOUD_TOKEN
-              valueFrom:
-                secretKeyRef:
-                  name: lab-platform-hcloud
-                  key: HCLOUD_TOKEN
+            - name: VM_NAMESPACE
+              value: {{ .Values.vmNamespace | quote }}
+            - name: SESSION_TTL_MINUTES
+              value: {{ .Values.sessionTTLMinutes | default 60 | quote }}
           resources:
             requests:
               cpu: 100m
@@ -50,3 +157,88 @@ spec:
             capabilities:
               drop:
                 - ALL
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: lab-operator
+  namespace: {{ .Release.Namespace }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: lab-operator
+  template:
+    metadata:
+      labels:
+        app: lab-operator
+    spec:
+      serviceAccountName: lab-platform
+      containers:
+        - name: lab-operator
+          image: {{ .Values.image }}
+          imagePullPolicy: Always
+          command: ["/lab-operator"]
+          env:
+            - name: OPERATOR_CONFIG
+              value: /etc/lab-operator/config.yaml
+            - name: VM_NAMESPACE
+              value: {{ .Values.vmNamespace | quote }}
+            - name: SERVER_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          volumeMounts:
+            - name: lab-operator-config
+              mountPath: /etc/lab-operator
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+      volumes:
+        - name: lab-operator-config
+          configMap:
+            name: lab-operator-config
+---
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: uds-lab-platform
+  namespace: {{ .Release.Namespace }}
+
+spec:
+  sso:
+    - clientId: uds-lab-platform
+      name: UDS Lab Platform
+      redirectUris:
+        - "https://lab.{{ .Values.domain }}/login"
+      enableAuthserviceSelector:
+        app: lab-platform
+  network:
+    allow:
+      # server → uds-lab-vms: proxy traffic to VMI Services
+      - direction: Egress
+        remoteNamespace: {{ .Values.vmNamespace }}
+        description: Proxy to lab VM services
+      # operator + server → k8s API server (list/watch/create LabSessions, VMIs, etc.)
+      - direction: Egress
+        remoteGenerated: KubeAPI
+        description: Kubernetes API server
+    expose:
+      - service: lab-platform
+        selector:
+          app: lab-platform
+        host: lab
+        gateway: tenant
+        port: 8080

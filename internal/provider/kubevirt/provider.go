@@ -46,10 +46,8 @@ const (
 	portShell  = 7682 // ttyd direct bash
 	portVNC    = 6080 // noVNC/websockify
 
-	// defaultDiskSize is the cloned root disk size. The uds-core image is
-	// 10–20GB and needs headroom for the nested k3d cluster.
-	// TODO(Phase 0): size from the spike's real image footprint.
-	defaultDiskSize = "40Gi"
+	// defaultDiskSize is the fallback clone PVC size when GoldenPVCDiskSize is empty.
+	defaultDiskSize = "80Gi"
 )
 
 // Config wires the provider to the cluster and to scenario content.
@@ -70,9 +68,11 @@ type Config struct {
 	// use sizing.Defaults.
 	SizeOverrides map[sizing.Size]sizing.Spec
 
-	// Images maps an image tier (base|tools|uds-core) to a CDI registry URL.
-	// TODO(Phase D): populate from operator config with real OCI digests.
-	Images map[string]string
+	// GoldenPVCs maps image tier (base|tools|uds-core) to a golden PVC name.
+	// CDI clones one golden PVC per session instead of importing from a registry.
+	GoldenPVCs         map[string]string
+	GoldenPVCNamespace string // namespace where golden PVCs live; defaults to Namespace
+	GoldenPVCDiskSize  string // size of the cloned PVC (must be >= golden PVC size)
 
 	// StorageClass for the cloned DataVolume PVC. Empty uses the cluster default.
 	StorageClass string
@@ -110,8 +110,8 @@ func (p *Provider) Reconcile(ctx context.Context, ls *labv1.LabSession) (provide
 	name := resourceName(ls)
 	labels := map[string]string{sessionLabel: ls.Spec.SessionID}
 
-	// Resolve image tier + size + cloud-init from scenario content.
-	imageURL, err := p.imageURLForScenario(ls.Spec.ScenarioID)
+	// Resolve golden PVC name + size + cloud-init from scenario content.
+	goldenPVCName, err := p.goldenPVCForScenario(ls.Spec.ScenarioID)
 	if err != nil {
 		return provider.Result{Phase: labv1.PhaseFailed, Message: err.Error()}, nil
 	}
@@ -130,10 +130,13 @@ func (p *Provider) Reconcile(ctx context.Context, ls *labv1.LabSession) (provide
 		return provider.Result{Phase: labv1.PhaseFailed, Message: err.Error()}, nil
 	}
 
-	if err := p.ensureDataVolume(ctx, ls, name, labels, imageURL); err != nil {
+	if err := p.ensureDataVolume(ctx, ls, name, labels, goldenPVCName); err != nil {
 		return provider.Result{}, fmt.Errorf("ensure datavolume: %w", err)
 	}
-	if err := p.ensureVMI(ctx, ls, name, labels, userData, spec); err != nil {
+	if err := p.ensureUserDataSecret(ctx, ls, name, labels, userData); err != nil {
+		return provider.Result{}, fmt.Errorf("ensure userdata secret: %w", err)
+	}
+	if err := p.ensureVMI(ctx, ls, name, labels, spec); err != nil {
 		return provider.Result{}, fmt.Errorf("ensure vmi: %w", err)
 	}
 	if err := p.ensureService(ctx, ls, name, labels); err != nil {
@@ -181,10 +184,9 @@ func (p *Provider) Teardown(ctx context.Context, ls *labv1.LabSession) error {
 	return nil
 }
 
-// imageURLForScenario maps a scenario to its image tier's CDI registry URL.
-// Mirrors the legacy tier logic: explicit image override, else playground tier,
-// else base.
-func (p *Provider) imageURLForScenario(scenarioID string) (string, error) {
+// goldenPVCForScenario maps a scenario to its golden PVC name.
+// Tier resolution: explicit sc.Image override → playground-<tier> prefix → "base".
+func (p *Provider) goldenPVCForScenario(scenarioID string) (string, error) {
 	sc, err := scenario.Load(p.cfg.ScenariosFS, scenarioID)
 	if err != nil {
 		return "", fmt.Errorf("load scenario %q: %w", scenarioID, err)
@@ -195,26 +197,34 @@ func (p *Provider) imageURLForScenario(scenarioID string) (string, error) {
 	case sc.Image != "":
 		tier = sc.Image
 	case sc.Playground:
-		// playground-<tier> -> <tier>
 		const prefix = "playground-"
 		if len(scenarioID) > len(prefix) && scenarioID[:len(prefix)] == prefix {
 			tier = scenarioID[len(prefix):]
 		}
 	}
 
-	url, ok := p.cfg.Images[tier]
-	if !ok || url == "" {
-		return "", fmt.Errorf("no image configured for tier %q (scenario %q)", tier, scenarioID)
+	pvcName, ok := p.cfg.GoldenPVCs[tier]
+	if !ok || pvcName == "" {
+		return "", fmt.Errorf("no golden PVC configured for tier %q (scenario %q)", tier, scenarioID)
 	}
-	return url, nil
+	return pvcName, nil
 }
 
-func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, name string, labels map[string]string, imageURL string) error {
-	diskQ, err := resource.ParseQuantity(defaultDiskSize)
+func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, name string, labels map[string]string, goldenPVCName string) error {
+	diskSizeStr := p.cfg.GoldenPVCDiskSize
+	if diskSizeStr == "" {
+		diskSizeStr = defaultDiskSize
+	}
+	diskQ, err := resource.ParseQuantity(diskSizeStr)
 	if err != nil {
 		return err
 	}
-	pullMethod := cdiv1.RegistryPullNode
+
+	srcNamespace := p.cfg.GoldenPVCNamespace
+	if srcNamespace == "" {
+		srcNamespace = p.cfg.Namespace
+	}
+
 	dv := &cdiv1.DataVolume{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.cfg.Namespace, Labels: labels},
 	}
@@ -222,9 +232,9 @@ func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, n
 		dv.Labels = labels
 		dv.Spec = cdiv1.DataVolumeSpec{
 			Source: &cdiv1.DataVolumeSource{
-				Registry: &cdiv1.DataVolumeSourceRegistry{
-					URL:        &imageURL,
-					PullMethod: &pullMethod,
+				PVC: &cdiv1.DataVolumeSourcePVC{
+					Namespace: srcNamespace,
+					Name:      goldenPVCName,
 				},
 			},
 			PVC: &corev1.PersistentVolumeClaimSpec{
@@ -240,7 +250,16 @@ func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, n
 	return err
 }
 
-func (p *Provider) ensureVMI(ctx context.Context, ls *labv1.LabSession, name string, labels map[string]string, userData string, spec sizing.Spec) error {
+func (p *Provider) ensureUserDataSecret(ctx context.Context, ls *labv1.LabSession, name string, labels map[string]string, userData string) error {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.cfg.Namespace, Labels: labels}}
+	_, err := controllerutil.CreateOrUpdate(ctx, p.cfg.Client, secret, func() error {
+		secret.StringData = map[string]string{"userdata": userData}
+		return controllerutil.SetControllerReference(ls, secret, p.cfg.Client.Scheme())
+	})
+	return err
+}
+
+func (p *Provider) ensureVMI(ctx context.Context, ls *labv1.LabSession, name string, labels map[string]string, spec sizing.Spec) error {
 	cpuQ, err := resource.ParseQuantity(spec.CPU)
 	if err != nil {
 		return fmt.Errorf("parse cpu %q: %w", spec.CPU, err)
@@ -274,7 +293,7 @@ func (p *Provider) ensureVMI(ctx context.Context, ls *labv1.LabSession, name str
 				},
 				Volumes: []kvv1.Volume{
 					{Name: "rootdisk", VolumeSource: kvv1.VolumeSource{DataVolume: &kvv1.DataVolumeSource{Name: name}}},
-					{Name: "cloudinitdisk", VolumeSource: kvv1.VolumeSource{CloudInitNoCloud: &kvv1.CloudInitNoCloudSource{UserData: userData}}},
+					{Name: "cloudinitdisk", VolumeSource: kvv1.VolumeSource{CloudInitNoCloud: &kvv1.CloudInitNoCloudSource{UserDataSecretRef: &corev1.LocalObjectReference{Name: name}}}},
 				},
 			}
 		}
@@ -334,15 +353,18 @@ func (p *Provider) ensureNetworkPolicy(ctx context.Context, ls *labv1.LabSession
 				}},
 				Ports: ingressPorts,
 			}},
-			// Egress: allow DNS (CoreDNS) so the in-VM software resolves names.
-			// TODO(Phase 0): the in-VM k3d cluster is self-contained; confirm what
-			// else (if anything) the guest legitimately needs to egress.
-			Egress: []netv1.NetworkPolicyEgressRule{{
-				Ports: []netv1.NetworkPolicyPort{
-					{Protocol: &udp, Port: &dns},
-					{Protocol: &tcp, Port: &dns},
+			// Egress: DNS + unrestricted internet for lab VM workloads.
+			// VMs run arbitrary student/exercise code that installs packages,
+			// hits APIs, and runs k3d clusters — full outbound is intentional.
+			Egress: []netv1.NetworkPolicyEgressRule{
+				{
+					Ports: []netv1.NetworkPolicyPort{
+						{Protocol: &udp, Port: &dns},
+						{Protocol: &tcp, Port: &dns},
+					},
 				},
-			}},
+				{}, // allow all other egress
+			},
 		}
 		return controllerutil.SetControllerReference(ls, np, p.cfg.Client.Scheme())
 	})

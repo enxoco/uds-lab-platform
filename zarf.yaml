@@ -10,15 +10,21 @@ metadata:
 variables:
   - name: IMAGE
     description: Lab platform container image
-    default: ghcr.io/enxoco/uds-lab-platform:dev
-  - name: HCLOUD_TOKEN
-    description: Hetzner Cloud API token
-    sensitive: true
+    default: ghcr.io/enxoco/uds-lab-platform:dev-local
   - name: DOMAIN
     description: Base domain for lab platform (e.g. example.com)
     default: uds.dev
 
 components:
+  - name: lab-crds
+    required: true
+    description: LabSession CRD — must deploy before the operator starts
+    manifests:
+      - name: lab-crds
+        files:
+          - deploy/namespace.yaml
+          - deploy/crd/lab.uds.dev_labsessions.yaml
+
   - name: lab-platform
     required: true
     charts:
@@ -30,13 +36,8 @@ components:
           - name: DOMAIN
             description: Base domain for lab platform
             path: domain
-          - name: HCLOUD_TOKEN
-            description: Hetzner Cloud API token
-            path: hcloudToken
           - name: IMAGE
             description: Lab platform container image
             path: image
-    imageArchives:
-      - path: ./lab-server.tar
-        images:
-          - ghcr.io/enxoco/uds-lab-platform:dev
+    images:
+      - ghcr.io/enxoco/uds-lab-platform:dev-local

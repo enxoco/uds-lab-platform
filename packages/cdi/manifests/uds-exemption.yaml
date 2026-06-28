@@ -1,0 +1,55 @@
+apiVersion: uds.dev/v1alpha1
+kind: Exemption
+metadata:
+  name: cdi
+  namespace: uds-policy-exemptions
+spec:
+  exemptions:
+    - matcher:
+        namespace: cdi
+        name: "^cdi-"
+      policies:
+        - DisallowPrivileged
+        - DisallowHostNamespaces
+        - RestrictHostPathWrite
+        - RestrictVolumeTypes
+        - RequireNonRootUser
+    - matcher:
+        namespace: uds-lab-vms
+        name: "^importer-"
+      policies:
+        - RestrictIstioSidecarOverrides
+        - RestrictIstioTrafficOverrides
+        - RequireNonRootUser
+        - RestrictVolumeTypes
+    - matcher:
+        namespace: uds-lab-vms
+        name: "^cdi-upload-"
+      policies:
+        - RestrictIstioSidecarOverrides
+        - RestrictIstioTrafficOverrides
+        - RequireNonRootUser
+        - RestrictVolumeTypes
+    - matcher:
+        namespace: uds-lab-vms
+        name: "-source-pod$"
+      policies:
+        - RestrictIstioSidecarOverrides
+        - RestrictIstioTrafficOverrides
+        - RequireNonRootUser
+        - RestrictVolumeTypes
+---
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: cdi
+  namespace: cdi
+spec:
+  network:
+    allow:
+      - direction: Egress
+        remoteGenerated: Anywhere
+        description: CDI image import egress (registry pulls)
+      - direction: Ingress
+        remoteNamespace: uds-lab-vms
+        description: DataVolume upload from lab VM namespace

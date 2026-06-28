@@ -13,11 +13,14 @@ import (
 )
 
 // Config is the operator ConfigMap, mounted as a file (path in OPERATOR_CONFIG).
-// It maps abstract sizes to resources and image tiers to CDI registry URLs.
+// It maps abstract sizes to resources and image tiers to golden PVC names.
+// Golden PVCs are pre-populated qcow2 disks; CDI clones one per session.
 type Config struct {
-	Provider string               `yaml:"provider"`
-	Sizes    map[string]sizeEntry `yaml:"sizes"`
-	Images   map[string]string    `yaml:"images"`
+	Provider           string               `yaml:"provider"`
+	Sizes              map[string]sizeEntry `yaml:"sizes"`
+	GoldenPVCs         map[string]string    `yaml:"goldenPVCs"`         // tier → PVC name
+	GoldenPVCNamespace string               `yaml:"goldenPVCNamespace"` // defaults to VM namespace
+	GoldenPVCDiskSize  string               `yaml:"goldenPVCDiskSize"`  // clone PVC size, e.g. "80Gi"
 }
 
 type sizeEntry struct {

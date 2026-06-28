@@ -1,0 +1,11 @@
+apiVersion: lab.uds.dev/v1alpha1
+kind: LabSession
+metadata:
+  name: test-s01
+  namespace: uds-lab-vms
+spec:
+  sessionID: test-s01
+  scenarioID: playground-tools
+  clientID: testuser
+  expiresAt: "2026-07-27T00:00:00Z"
+  size: small

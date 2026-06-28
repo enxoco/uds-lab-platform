@@ -1,3 +1,13 @@
 domain: uds.dev
-hcloudToken: ""
-image: ghcr.io/enxoco/uds-lab-platform:dev
+image: ghcr.io/enxoco/uds-lab-platform:dev-local
+vmNamespace: uds-lab-vms
+sessionTTLMinutes: 60
+
+# Operator config — maps image tiers to pre-populated golden PVCs.
+# CDI clones one golden PVC per lab session instead of importing from a registry.
+goldenPVCs:
+  base: golden-base
+  tools: golden-tools
+  uds-core: golden-uds-core
+goldenPVCNamespace: ""   # defaults to vmNamespace
+goldenPVCDiskSize: "80Gi"

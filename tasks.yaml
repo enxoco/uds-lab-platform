@@ -4,44 +4,200 @@ includes:
   - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/olm.yaml
   - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/publish.yaml
   - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/scan.yaml
-  - setup: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/setup.yaml
+  - setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
   - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/vouch.yaml
 
 tasks:
+  # ── Lint ─────────────────────────────────────────────────────────────────────
+
   - name: lint
     description: Run linters and static analysis
     actions:
       - description: Run golangci-lint
         cmd: golangci-lint run ./...
+
+  # ── Build packer VM images ────────────────────────────────────────────────────
+  # Builds base → playground-tools → playground-uds-core qcow2s.
+  # Full run takes 60+ min. Skip stages with SKIP_BASE/SKIP_TOOLS/SKIP_UDS_CORE=1.
+
+  - name: build-images
+    description: Build VM qcow2 images with packer (base → tools → uds-core)
+    inputs:
+      skip_base:
+        description: "Skip base image build (reuse existing output/base/lab-base.qcow2)"
+        default: "0"
+      skip_tools:
+        description: "Skip tools image build"
+        default: "0"
+      skip_uds_core:
+        description: "Skip UDS Core image build"
+        default: "0"
+    actions:
+      - description: Build packer images
+        dir: packer
+        cmd: |
+          SKIP_BASE="${{ .inputs.skip_base }}" \
+          SKIP_TOOLS="${{ .inputs.skip_tools }}" \
+          SKIP_UDS_CORE="${{ .inputs.skip_uds_core }}" \
+          ./build-images-qemu.sh
+
+  # ── Cluster lifecycle ─────────────────────────────────────────────────────────
+  # Wipes k3s, installs k3s + MetalLB + KubeVirt + UDS Core, deploys lab-platform,
+  # and optionally imports golden PVCs. Requires pre-built qcow2s for golden PVCs.
+
+  - name: cluster-up
+    description: Wipe + rebuild k3s cluster, deploy all packages, import golden PVCs
+    inputs:
+      skip_wipe:
+        description: "Skip k3s reinstall (redeploy packages only)"
+        default: "0"
+      skip_golden_pvc:
+        description: "Skip golden PVC import (run build-images first)"
+        default: "0"
+    actions:
+      - description: Setup cluster
+        cmd: |
+          SKIP_WIPE="${{ .inputs.skip_wipe }}" \
+          SKIP_GOLDEN_PVC="${{ .inputs.skip_golden_pvc }}" \
+          BASE_QCOW2=packer/output/base/lab-base.qcow2 \
+          TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \
+          UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
+          ./scripts/dev-cluster-setup.sh
+
+  # ── CoreDNS patch ─────────────────────────────────────────────────────────────
+  # Overrides *.uds.dev in CoreDNS NodeHosts so in-cluster pods/VMs reach the
+  # correct MetalLB gateway instead of the public 127.0.0.1 wildcard.
+
+  - name: patch-coredns
+    description: Patch CoreDNS to route *.uds.dev to MetalLB gateways
+    actions:
+      - description: Patch CoreDNS NodeHosts
+        cmd: ./scripts/patch-coredns.sh
+
+  # ── Keycloak test user ────────────────────────────────────────────────────────
+
+  - name: create-test-user
+    description: Create test Keycloak user (doug / unicorn123!@#UN) in /UDS Core/Admin
+    actions:
+      - task: setup:keycloak-user
+        with:
+          group: "/UDS Core/Admin"
+
+  # ── nginx SNI proxy ───────────────────────────────────────────────────────────
+  # Routes *.admin.uds.dev → admin MetalLB gateway, everything else → tenant.
+  # Required for access from remote machines (Tailscale etc.).
+  # IPs are read dynamically from k8s LoadBalancer services — no hardcoding.
+
+  - name: start-proxy
+    description: Start nginx SNI reverse proxy (auto-detects MetalLB IPs)
+    actions:
+      - description: Generate nginx.conf + start proxy
+        cmd: |
+          export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+          ADMIN_IP=$(kubectl get svc admin-ingressgateway -n istio-admin-gateway \
+            --request-timeout=30s -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          TENANT_IP=$(kubectl get svc tenant-ingressgateway -n istio-tenant-gateway \
+            --request-timeout=30s -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+          if [ -z "$ADMIN_IP" ] || [ -z "$TENANT_IP" ]; then
+            echo "WARNING: Could not detect gateway IPs — run ./scripts/start-proxy.sh manually after cluster is up"
+            exit 0
+          fi
+          echo "Admin: $ADMIN_IP  Tenant: $TENANT_IP"
+          cat > hack/proxy/nginx.conf << NGINX_EOF
+          worker_processes 1;
+          events { worker_connections 1024; }
+          stream {
+              map \$ssl_preread_server_name \$backend_443 {
+                  ~*\.admin\.uds\.dev  ${ADMIN_IP}:443;
+                  default              ${TENANT_IP}:443;
+              }
+              map \$ssl_preread_server_name \$backend_80 {
+                  ~*\.admin\.uds\.dev  ${ADMIN_IP}:80;
+                  default              ${TENANT_IP}:80;
+              }
+              server { listen 443; proxy_pass \$backend_443; ssl_preread on; }
+              server { listen 80; proxy_pass \$backend_80; }
+          }
+          NGINX_EOF
+          docker compose -f hack/proxy/docker-compose.yaml up -d
+
+  - name: stop-proxy
+    description: Stop nginx SNI reverse proxy
+    actions:
+      - description: Stop nginx proxy
+        cmd: docker compose -f hack/proxy/docker-compose.yaml down
+
+  # ── Fast redeploy (no cluster wipe) ─────────────────────────────────────────
+  # Rebuilds the Docker image + Zarf package + bundle, redeploys.
+  # Use when iterating on operator or server code without needing a full cluster
+  # wipe. Does NOT rebuild packer images or golden PVCs.
+
+  - name: redeploy
+    description: "Rebuild + redeploy operator/server image without wiping the cluster"
+    actions:
+      - description: Rebuild Docker image
+        cmd: docker build -t ghcr.io/enxoco/uds-lab-platform:dev-local .
+
+      - description: Rebuild Zarf package + bundle + deploy
+        cmd: |
+          LOG=/tmp/uds-dev-redeploy.log
+          echo "▶ Streaming output to $LOG — tail -f $LOG in another terminal"
+          (
+            zarf package create . --confirm --skip-sbom
+            uds create bundle/ --confirm
+            BUNDLE=$(ls bundle/uds-bundle-uds-lab-platform-*.tar.zst | tail -1)
+            uds deploy "$BUNDLE" --confirm
+            kubectl rollout restart deployment/lab-operator deployment/lab-platform \
+              -n lab-platform
+          ) 2>&1 | tee "$LOG"
+
+      - description: Done
+        cmd: |
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════╗"
+          echo "  Redeploy complete"
+          echo "  Check operator: kubectl logs -n lab-platform -l app=lab-operator -f"
+          echo "╚══════════════════════════════════════════════════════════╝"
+
+  # ── Full e2e dev workflow ─────────────────────────────────────────────────────
+  # Runs the full local dev setup end to end.
+  #
+  # Skip flags (pass as --set KEY=VALUE):
+  #   SKIP_BASE=1        skip base packer build (reuse existing qcow2)
+  #   SKIP_TOOLS=1       skip tools packer build
+  #   SKIP_UDS_CORE=1    skip UDS Core packer build
+  #   SKIP_IMAGES=1      skip all packer builds (use existing qcow2s)
+  #   SKIP_WIPE=1        skip k3s reinstall (redeploy packages only)
+  #
+  # Examples:
+  #   uds run dev                            # full e2e from scratch
+  #   uds run dev --with SKIP_IMAGES=1        # skip packer, just rebuild cluster
+  #   uds run dev --with SKIP_WIPE=1         # keep k3s, redeploy packages + pvcs
+
   - name: dev
-    description: Build image, save tar, create zarf package
+    description: "Full e2e: build VM images, setup cluster, deploy platform, configure access"
+    inputs:
+      SKIP_IMAGES:
+        description: "Skip all packer image builds (use existing qcow2s)"
+        default: "0"
+      SKIP_BASE:
+        description: "Skip base image build"
+        default: "0"
+      SKIP_TOOLS:
+        description: "Skip tools image build"
+        default: "0"
+      SKIP_UDS_CORE:
+        description: "Skip UDS Core image build"
+        default: "0"
+      SKIP_WIPE:
+        description: "Skip k3s reinstall"
+        default: "0"
     actions:
-      - description: Build container image
-        cmd: docker build -t ghcr.io/enxoco/uds-lab-platform:dev .
-      - description: Save image to tar for zarf
-        cmd: docker save ghcr.io/enxoco/uds-lab-platform:dev -o ./lab-server.tar
-      - description: Create zarf package
-        cmd: zarf package create . --set VERSION=0.1.0 --output ./bundle --confirm
-
-
-
-  - name: bundle
-    description: Create UDS bundle from local zarf package
-    actions:
-      - description: Create UDS bundle
-        cmd: uds create . --confirm
-        dir: ./bundle
-
-  - name: deploy
-    description: Deploy UDS bundle (requires HCLOUD_TOKEN env var)
-    actions:
-      - description: Deploy UDS bundle
-        dir: ./bundle
-        cmd: uds deploy uds-bundle-uds-lab-platform-amd64-0.1.0.tar.zst --set HCLOUD_TOKEN="${HCLOUD_TOKEN}" --confirm
-
-  - name: all
-    description: Build, bundle, and deploy end-to-end
-    actions:
-      - task: dev
-      - task: bundle
-      - task: deploy
+      - description: Run full e2e via dev.sh
+        cmd: |
+          SKIP_IMAGES="${{ .inputs.SKIP_IMAGES }}" \
+          SKIP_WIPE="${{ .inputs.SKIP_WIPE }}" \
+          SKIP_BASE="${{ .inputs.SKIP_BASE }}" \
+          SKIP_TOOLS="${{ .inputs.SKIP_TOOLS }}" \
+          SKIP_UDS_CORE="${{ .inputs.SKIP_UDS_CORE }}" \
+          ./scripts/dev.sh

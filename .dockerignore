@@ -1,0 +1,15 @@
+packer/output/
+packer/packer-key
+packer/packer-key.pub
+packer/manifest*.json
+node_modules/
+packages/
+*.tar
+*.tar.zst
+*.qcow2
+.tmp-*
+web/static/ide-assets/
+web/ide-src/
+.codegraph/
+hack/
+scripts/

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -11,16 +10,17 @@ import (
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
-	"text/template"
 	"time"
 
 	labplatform "github.com/defenseunicorns/uds-lab-platform"
-	"github.com/defenseunicorns/uds-lab-platform/internal/hetzner"
+	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
 	"github.com/defenseunicorns/uds-lab-platform/internal/proxy"
 	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
 	"github.com/defenseunicorns/uds-lab-platform/internal/session"
 	"github.com/google/uuid"
+	"k8s.io/apimachinery/pkg/runtime"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 type server struct {
@@ -30,24 +30,11 @@ type server struct {
 }
 
 func main() {
-	hcloudToken := os.Getenv("HCLOUD_TOKEN")
-	if hcloudToken == "" {
-		fmt.Print("Hetzner API token: ")
-		scanner := bufio.NewScanner(os.Stdin)
-		if scanner.Scan() {
-			hcloudToken = strings.TrimSpace(scanner.Text())
-		}
-		if hcloudToken == "" {
-			log.Fatal("HCLOUD_TOKEN is required")
-		}
-	}
-
 	ttlMinutes, _ := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
-	location := envOr("VM_LOCATION", "hil")
-	vmImage := envOr("VM_IMAGE", "ubuntu-24.04")
+	vmNamespace := envOr("VM_NAMESPACE", "uds-lab-vms")
 	port := envOr("PORT", "8080")
 
-	// Scenarios FS: OS override for development, embedded otherwise
+	// Scenarios FS: OS override for development, embedded otherwise.
 	var scenariosFS fs.FS
 	if dir := os.Getenv("SCENARIOS_DIR"); dir != "" {
 		scenariosFS = os.DirFS(dir)
@@ -60,7 +47,7 @@ func main() {
 		scenariosFS = sub
 	}
 
-	// Static files FS: OS override for development
+	// Static files FS: OS override for development.
 	var staticFS fs.FS
 	if dir := os.Getenv("STATIC_DIR"); dir != "" {
 		staticFS = os.DirFS(dir)
@@ -73,36 +60,21 @@ func main() {
 		staticFS = sub
 	}
 
-	// VM user-data template: embedded
-	vmFS, err := fs.Sub(labplatform.VMFiles, "vm")
-	if err != nil {
-		log.Fatalf("embedded vm: %v", err)
+	// Build k8s client (in-cluster or from KUBECONFIG for local dev).
+	scheme := runtime.NewScheme()
+	if err := labv1.AddToScheme(scheme); err != nil {
+		log.Fatalf("register LabSession scheme: %v", err)
 	}
-	tmplData, err := fs.ReadFile(vmFS, "user-data.sh.gotmpl")
+	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		log.Fatalf("load user-data template: %v", err)
+		log.Fatalf("get kubeconfig: %v", err)
 	}
-	udTmpl, err := template.New("user-data.sh.gotmpl").Parse(string(tmplData))
+	k8s, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
-		log.Fatalf("parse user-data template: %v", err)
-	}
-	injectPy, err := fs.ReadFile(vmFS, "lab-inject.py")
-	if err != nil {
-		log.Fatalf("load lab-inject.py: %v", err)
+		log.Fatalf("build k8s client: %v", err)
 	}
 
-	mgr := session.NewManager(
-		hetzner.New(hcloudToken),
-		time.Duration(ttlMinutes)*time.Minute,
-		session.VMConfig{
-			Location:     location,
-			Image:        vmImage,
-			SSHKeyNames:  []string{"local"},
-			UserDataTmpl: udTmpl,
-			ScenariosFS:  scenariosFS,
-			InjectPy:     string(injectPy),
-		},
-	)
+	mgr := session.NewManager(k8s, vmNamespace, time.Duration(ttlMinutes)*time.Minute, scenariosFS)
 
 	srv := &server{mgr: mgr, scenariosFS: scenariosFS, ttlMinutes: ttlMinutes}
 	mux := http.NewServeMux()
@@ -123,7 +95,7 @@ func main() {
 	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
 	mux.Handle("/", http.FileServerFS(staticFS))
 
-	log.Printf("labserver listening on :%s", port)
+	log.Printf("labserver listening on :%s (vm-namespace=%s)", port, vmNamespace)
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
@@ -216,15 +188,15 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if sess.Status != session.StatusReady {
+	if sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		jsonError(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
 	step := r.PathValue("step")
 	body, _ := json.Marshal(map[string]string{"step": step})
-	client := &http.Client{Timeout: 35 * time.Second}
-	resp, err := client.Post(
-		fmt.Sprintf("http://%s:7680/verify", sess.VMIP),
+	httpClient := &http.Client{Timeout: 35 * time.Second}
+	resp, err := httpClient.Post(
+		fmt.Sprintf("http://%s:7680/verify", sess.ServiceDNS),
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -247,7 +219,7 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if sess.Status != session.StatusReady {
+	if sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
@@ -256,9 +228,9 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read body failed", http.StatusBadRequest)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(
-		fmt.Sprintf("http://%s:7680/cmd", sess.VMIP),
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Post(
+		fmt.Sprintf("http://%s:7680/cmd", sess.ServiceDNS),
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -280,7 +252,7 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if !sess.BrowserEnabled || sess.Status != session.StatusReady {
+	if !sess.BrowserEnabled || sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		http.Error(w, "browser not available", http.StatusServiceUnavailable)
 		return
 	}
@@ -289,9 +261,9 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "read body failed", http.StatusBadRequest)
 		return
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(
-		fmt.Sprintf("http://%s:7680/navigate", sess.VMIP),
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Post(
+		fmt.Sprintf("http://%s:7680/navigate", sess.ServiceDNS),
 		"application/json",
 		bytes.NewReader(body),
 	)
@@ -314,17 +286,15 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Scenario-defined services (explicit, ordered first)
 	sc, err := scenario.Load(s.scenariosFS, sess.Scenario)
 	var services []scenario.ServiceLink
 	if err == nil && len(sc.Services) > 0 {
 		services = sc.Services
 	}
 
-	// Auto-detect from cluster VirtualServices
-	if sess.BrowserEnabled && sess.Status == session.StatusReady {
-		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(fmt.Sprintf("http://%s:7680/services", sess.VMIP))
+	if sess.BrowserEnabled && sess.Status == session.StatusReady && sess.ServiceDNS != "" {
+		httpClient := &http.Client{Timeout: 10 * time.Second}
+		resp, err := httpClient.Get(fmt.Sprintf("http://%s:7680/services", sess.ServiceDNS))
 		if err == nil {
 			defer func() { _ = resp.Body.Close() }()
 			var detected []scenario.ServiceLink
@@ -363,11 +333,11 @@ func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "browser not available for this scenario", http.StatusNotFound)
 		return
 	}
-	if sess.Status != session.StatusReady {
+	if sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:6080", sess.VMIP), fmt.Sprintf("/vnc/%s", id)).ServeHTTP(w, r)
+	proxy.Handler(fmt.Sprintf("http://%s:6080", sess.ServiceDNS), fmt.Sprintf("/vnc/%s", id)).ServeHTTP(w, r)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
@@ -389,11 +359,11 @@ func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, po
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if sess.Status != session.StatusReady {
+	if sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:%d", sess.VMIP, port), stripPrefix).ServeHTTP(w, r)
+	proxy.Handler(fmt.Sprintf("http://%s:%d", sess.ServiceDNS, port), stripPrefix).ServeHTTP(w, r)
 }
 
 func jsonOK(w http.ResponseWriter, v any) {
@@ -407,15 +377,11 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// ownsSession returns true if the request's lab_client_id cookie matches the session owner.
-// Never sets a cookie — use clientID for that.
 func ownsSession(r *http.Request, sess *session.Session) bool {
 	c, err := r.Cookie("lab_client_id")
 	return err == nil && c.Value != "" && c.Value == sess.ClientID
 }
 
-// clientID returns a stable client identifier from the lab_client_id cookie,
-// setting a new one if absent. Swap this for a GitHub user ID when auth lands.
 func clientID(w http.ResponseWriter, r *http.Request) string {
 	const cookieName = "lab_client_id"
 	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {

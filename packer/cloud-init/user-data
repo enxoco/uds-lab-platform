@@ -1,0 +1,22 @@
+#cloud-config
+users:
+  - name: packer
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    groups: [adm, cdrom, dip, plugdev, lxd, sudo, docker]
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMR+p3PRpHz760ER+kcW4OKhEUTFr0AJVS1gbZypZSMp packer-build
+
+ssh_pwauth: false
+
+# Grow the root partition to fill the resized disk
+growpart:
+  mode: auto
+  devices: [/]
+resize_rootfs: true
+
+# Clean cloud-init state so each new VM clone runs cloud-init fresh.
+# Do NOT disable — lab VMs need cloud-init to run our per-session script.
+runcmd:
+  - cloud-init clean --machine-id --logs

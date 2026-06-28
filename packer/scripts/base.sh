@@ -14,7 +14,8 @@ apt-get update -q
 apt-get upgrade -y -q
 apt-get install -y -q \
   tmux curl python3 \
-  xvfb x11vnc novnc chromium-browser
+  xvfb x11vnc novnc chromium-browser \
+  dnsmasq
 
 # ── ttyd ───────────────────────────────────────────────────────────────────────
 log "Installing ttyd..."
@@ -202,6 +203,9 @@ RestartSec=5
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# dnsmasq is installed but configured at boot via user-data
+systemctl disable dnsmasq
 
 systemctl daemon-reload
 

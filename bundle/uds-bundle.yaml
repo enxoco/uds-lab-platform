@@ -5,6 +5,75 @@ metadata:
   version: "0.1.0"
 
 packages:
+  - name: core-base
+    repository: ghcr.io/defenseunicorns/packages/uds/core-base
+    ref: 1.7.0-upstream
+    overrides:
+      pepr-uds-core:
+        module:
+          values:
+            - path: additionalIgnoredNamespaces
+              value:
+                - uds-dev-stack
+      istio-controlplane:
+        istiod:
+          variables:
+            - name: ISTIOD_CPU_REQUEST
+              value: 100m
+            - name: ISTIOD_MEMORY_REQUEST
+              value: 1024Mi
+            - name: PROXY_CPU_LIMIT
+              value: 2000m
+            - name: PROXY_CPU_REQUEST
+              value: 10m
+            - name: PROXY_MEMORY_LIMIT
+              value: 1024Mi
+            - name: PROXY_MEMORY_REQUEST
+              value: 40Mi
+
+  - name: core-identity-authorization
+    repository: ghcr.io/defenseunicorns/packages/uds/core-identity-authorization
+    ref: 1.7.0-upstream
+    overrides:
+      keycloak:
+        keycloak:
+          variables:
+            - name: KEYCLOAK_CPU_LIMIT
+              value: 1000m
+            - name: KEYCLOAK_CPU_REQUEST
+              value: 100m
+            - name: KEYCLOAK_MEMORY_LIMIT
+              value: 1Gi
+            - name: KEYCLOAK_MEMORY_REQUEST
+              value: 512Mi
+            - name: KEYCLOAK_WAYPOINT_CPU_REQUEST
+              value: 100m
+            - name: KEYCLOAK_WAYPOINT_HPA_ENABLED
+              value: false
+            - name: KEYCLOAK_WAYPOINT_MEMORY_REQUEST
+              value: 64Mi
+      authservice:
+        authservice:
+          variables:
+            - name: AUTHSERVICE_REPLICA_COUNT
+              value: 1
+
+  - name: kubevirt
+    path: ../../../uds-packages/kubevirt
+    ref: dev
+    overrides:
+      kubevirt:
+        uds-kubevirt-config:
+          variables:
+            - name: VM_NAMESPACES
+              path: vmNamespaces
+              value:
+                - uds-lab-vms
+
+  - name: cdi
+    path: ../packages/cdi
+    ref: v1.64.0
+
   - name: uds-lab-platform
-    path: ./
+    path: ../
     ref: "0.1.0"

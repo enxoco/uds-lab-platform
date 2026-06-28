@@ -95,7 +95,9 @@ func main() {
 		ScenariosFS:     scenariosFS,
 		InjectPy:        string(injectPy),
 		SizeOverrides:   sizeOverrides,
-		Images:          cfg.Images,
+		GoldenPVCs:         cfg.GoldenPVCs,
+		GoldenPVCNamespace: cfg.GoldenPVCNamespace,
+		GoldenPVCDiskSize:  cfg.GoldenPVCDiskSize,
 		StorageClass:    storageClass,
 	})
 

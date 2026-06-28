@@ -16,9 +16,11 @@ sizes:
   large:
     cpu: "8"
     memory: "16Gi"
-images:
-  base: registry.local/base@sha256:abc
-  uds-core: registry.local/uds-core@sha256:def
+goldenPVCs:
+  base: golden-base
+  uds-core: golden-uds-core
+goldenPVCNamespace: uds-lab-vms
+goldenPVCDiskSize: "80Gi"
 `)
 	c, err := parse(data)
 	if err != nil {
@@ -27,8 +29,8 @@ images:
 	if c.Provider != "kubevirt" {
 		t.Errorf("provider = %q, want kubevirt", c.Provider)
 	}
-	if c.Images["uds-core"] == "" {
-		t.Errorf("missing uds-core image ref")
+	if c.GoldenPVCs["uds-core"] == "" {
+		t.Errorf("missing uds-core golden PVC name")
 	}
 
 	overrides, err := c.SizeOverrides()
@@ -56,7 +58,7 @@ func TestLoadMissingPathIsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load(\"\"): %v", err)
 	}
-	if len(c.Sizes) != 0 || len(c.Images) != 0 {
+	if len(c.Sizes) != 0 || len(c.GoldenPVCs) != 0 {
 		t.Errorf("expected empty config, got %+v", c)
 	}
 }
