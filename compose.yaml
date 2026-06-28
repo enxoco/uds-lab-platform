@@ -1,0 +1,37 @@
+name: uds-lab-platform
+
+services:
+  labserver:
+    build: .
+    restart: unless-stopped
+    environment:
+      HCLOUD_TOKEN: ${HCLOUD_TOKEN}
+      WORKSHOP_CODE: ${WORKSHOP_CODE}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-https://uds-labs.hackanooga.com/auth/callback}
+      ADMIN_USERS: ${ADMIN_USERS}
+      SESSION_TTL_MINUTES: ${SESSION_TTL_MINUTES:-60}
+      VM_SERVER_TYPE: ${VM_SERVER_TYPE:-ccx13}
+      VM_LOCATION: ${VM_LOCATION:-hil}
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  caddy_data:
+  caddy_config:

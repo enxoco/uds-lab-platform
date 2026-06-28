@@ -66,6 +66,7 @@
       <div class="terminal-header">
         <div class="tab-bar" id="tab-bar"></div>
         <button class="tab-add" id="tab-add" onclick="addTab()" title="New terminal" disabled>+</button>
+        <button class="tab-btn tab-ide" id="ide-btn" onclick="toggleIDE()" title="Web IDE" disabled style="margin-left:8px;">⌨ IDE</button>
         <span style="flex:1"></span>
         <div id="service-chips" style="display:flex;align-items:stretch;gap:0;"></div>
         <button class="btn-browser" id="browser-btn" onclick="openBrowser()" style="display:none;" title="Open browser preview">⬡ Browser</button>
@@ -76,6 +77,8 @@
           <div class="spinner"></div>
           <div class="loading-text" id="loading-text">Provisioning lab environment…</div>
         </div>
+        <iframe id="ide-frame" src="" title="Web IDE"
+                style="width:100%;height:100%;border:none;display:none;" allow="clipboard-read; clipboard-write"></iframe>
       </div>
     </div>
   </div>
@@ -99,6 +102,7 @@
     let pollInterval = null;
     let tabs = [];       // [{id, iframe, btn}]
     let activeTab = null;
+    let ideOpen = false;
     let vncWindow = null;
     let servicesPollInterval = null;
     let servicesOpen = true;
@@ -139,6 +143,12 @@
     }
 
     function switchTab(idx) {
+      // Exit IDE mode if switching to a terminal tab
+      if (ideOpen) {
+        ideOpen = false;
+        document.getElementById('ide-frame').style.display = 'none';
+        document.getElementById('ide-btn').classList.remove('active');
+      }
       tabs.forEach((t, i) => {
         t.iframe.style.display = i === idx ? 'block' : 'none';
         t.btn.classList.toggle('active', i === idx);
@@ -180,6 +190,7 @@
           document.getElementById('loading').classList.add('hidden');
           document.getElementById('terminal-status').textContent = 'Connected';
           document.getElementById('tab-add').disabled = false;
+          document.getElementById('ide-btn').disabled = false;
           if (sess.browser_enabled) {
             document.getElementById('browser-btn').style.display = 'inline-flex';
           }
@@ -292,6 +303,28 @@
       updateDots();
       bindCodeBlocks();
       bindVNCLinks();
+    }
+
+    // ── IDE ──────────────────────────────────────────────────────────────────
+    function toggleIDE() {
+      ideOpen = !ideOpen;
+      const ideFrame = document.getElementById('ide-frame');
+      const ideBtn   = document.getElementById('ide-btn');
+
+      if (ideOpen) {
+        if (!ideFrame.getAttribute('data-loaded')) {
+          ideFrame.src = `/ide/${SESSION}`;
+          ideFrame.setAttribute('data-loaded', '1');
+        }
+        ideFrame.style.display = 'block';
+        tabs.forEach(t => { t.iframe.style.display = 'none'; });
+        ideBtn.classList.add('active');
+        tabs.forEach(t => t.btn.classList.remove('active'));
+      } else {
+        ideFrame.style.display = 'none';
+        ideBtn.classList.remove('active');
+        if (activeTab !== null) switchTab(activeTab);
+      }
     }
 
     // ── Browser preview ─────────────────────────────────────────────────────
