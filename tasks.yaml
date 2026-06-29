@@ -1,12 +1,12 @@
 includes:
-  - attest: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/attest.yaml
-  - build: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/build.yaml
-  - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/olm.yaml
-  - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/publish.yaml
-  - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/scan.yaml
-  - setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
-  - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/refs/heads/feat/simplify-vouch-task/tasks/vouch.yaml
-
+ - attest: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/attest.yaml
+  - build: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/build.yaml
+  - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/olm.yaml
+  - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/publish.yaml
+  - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/scan.yaml
+  - setup: https://raw.githubusercontent.com/defenseunicorns/udm-common/v0.13.2/tasks/setup.yaml
+  - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/vouch.yaml
+  - uds-setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
 tasks:
   # ── Lint ─────────────────────────────────────────────────────────────────────
 

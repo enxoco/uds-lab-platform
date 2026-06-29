@@ -95,7 +95,7 @@ echo "▶ Patching CoreDNS..."
 
 # ── Keycloak test user ────────────────────────────────────────────────────────
 echo "▶ Creating Keycloak test user..."
-uds run setup:keycloak-user --with group="/UDS Core/Admin"
+uds run uds-setup:keycloak-user --with group="/UDS Core/Admin"
 
 # ── nginx proxy ───────────────────────────────────────────────────────────────
 echo "▶ Starting nginx proxy..."
