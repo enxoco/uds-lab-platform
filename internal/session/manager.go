@@ -65,8 +65,6 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Ses
 	if err != nil {
 		return nil, fmt.Errorf("invalid size in scenario %q: %w", scenarioID, err)
 	}
-
-	id := uuid.New().String()
 	now := time.Now()
 	expiresAt := now.Add(m.ttl)
 

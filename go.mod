@@ -1,4 +1,4 @@
-module github.com/defenseunicorns/uds-lab-platform
+module github.com/enxoco/uds-lab-platform
 
 go 1.26
 

@@ -6,6 +6,7 @@ import os
 import socket
 import struct
 import urllib.request
+from urllib.parse import urlparse, parse_qs
 
 
 def cdp_navigate(url):
@@ -90,7 +91,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_GET(self):
-        if self.path == '/services':
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+
+        if parsed.path == '/services':
             try:
                 result = subprocess.run(
                     ['uds', 'zarf', 'tools', 'kubectl', 'get',
@@ -115,6 +119,59 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header('Content-Length', str(len(response)))
             self.end_headers()
             self.wfile.write(response)
+
+        elif parsed.path == '/files':
+            path = params.get('path', ['/root'])[0]
+            path = os.path.realpath(path)
+            if not path.startswith('/root'):
+                self.send_response(403); self.end_headers(); return
+            try:
+                if os.path.isdir(path):
+                    entries = sorted(
+                        [{'name': n, 'path': os.path.join(path, n),
+                          'type': 'dir' if os.path.isdir(os.path.join(path, n)) else 'file'}
+                         for n in os.listdir(path)],
+                        key=lambda e: (e['type'] == 'file', e['name'].lower())
+                    )
+                    response = json.dumps(entries).encode()
+                    ct = 'application/json'
+                elif os.path.isfile(path):
+                    with open(path, 'rb') as f:
+                        response = f.read()
+                    ct = 'text/plain; charset=utf-8'
+                else:
+                    self.send_response(404); self.end_headers(); return
+                self.send_response(200)
+                self.send_header('Content-Type', ct)
+                self.send_header('Content-Length', str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+            except Exception as e:
+                self.send_response(500); self.end_headers()
+
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_PUT(self):
+        parsed = urlparse(self.path)
+        params = parse_qs(parsed.query)
+        length = int(self.headers.get('Content-Length', 0))
+
+        if parsed.path == '/files':
+            path = params.get('path', [''])[0]
+            path = os.path.realpath(path)
+            if not path or not path.startswith('/root'):
+                self.send_response(403); self.end_headers(); return
+            try:
+                content = self.rfile.read(length)
+                os.makedirs(os.path.dirname(path), exist_ok=True)
+                with open(path, 'wb') as f:
+                    f.write(content)
+                self.send_response(200)
+            except Exception:
+                self.send_response(500)
+            self.end_headers()
         else:
             self.send_response(404)
             self.end_headers()

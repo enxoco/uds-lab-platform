@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDS Labs — Admin</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .admin-wrap { max-width: 1000px; margin: 40px auto; padding: 0 24px; }
+    .page-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .page-header h1 { font-size: 20px; font-weight: 600; }
+    .badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 20px;
+      background: rgba(248,81,73,0.15);
+      color: var(--danger);
+      border: 1px solid rgba(248,81,73,0.3);
+    }
+    .refresh { margin-left: auto; font-size: 12px; color: var(--text-muted); }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    th, td {
+      padding: 11px 16px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+    }
+    th { font-weight: 600; color: var(--text-muted); background: var(--bg); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    tr:last-child td { border-bottom: none; }
+    .gh { font-family: var(--mono); font-size: 13px; }
+    .status-provisioning { color: var(--warn); }
+    .status-ready { color: var(--success); }
+    .ttl { font-family: var(--mono); font-size: 12px; }
+    .ttl-warn { color: var(--warn); }
+    .btn-kill {
+      padding: 4px 12px;
+      background: transparent;
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      border-radius: var(--radius);
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, color 0.15s;
+    }
+    .btn-kill:hover { background: var(--danger); color: #fff; }
+    .empty {
+      color: var(--text-muted);
+      padding: 48px;
+      text-align: center;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+    }
+    .denied { color: var(--danger); padding: 48px; text-align: center; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">UDS Labs</span>
+    <span class="badge">Admin</span>
+    <a href="/" style="margin-left:auto;font-size:13px">← Catalog</a>
+  </nav>
+  <div class="admin-wrap">
+    <div class="page-header">
+      <h1>Active Sessions</h1>
+      <span class="refresh" id="last-refresh"></span>
+    </div>
+    <div id="content">Loading…</div>
+  </div>
+  <script>
+    function minsLeft(ts) {
+      return Math.round((new Date(ts) - Date.now()) / 60000);
+    }
+
+    function fmtTTL(ts) {
+      const m = minsLeft(ts);
+      if (m < 0) return '<span style="color:var(--danger)">expired</span>';
+      if (m < 10) return `<span class="ttl-warn">${m}m left</span>`;
+      return `${m}m left`;
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    async function load() {
+      const res = await fetch('/api/admin/sessions');
+      if (res.status === 403) {
+        document.getElementById('content').innerHTML = '<div class="denied">Access denied — not an admin account.</div>';
+        return;
+      }
+      const sessions = await res.json();
+      document.getElementById('last-refresh').textContent = 'Refreshed ' + new Date().toLocaleTimeString();
+
+      if (!sessions.length) {
+        document.getElementById('content').innerHTML = '<div class="empty">No active sessions.</div>';
+        return;
+      }
+
+      const rows = sessions.map(s => `
+        <tr>
+          <td class="gh">@${esc(s.github_user || '—')}</td>
+          <td>${esc(s.scenario)}</td>
+          <td><span class="status-${esc(s.status)}">${esc(s.status)}</span></td>
+          <td class="ttl">${esc(s.vm_ip || '—')}</td>
+          <td class="ttl">${fmtTTL(s.expires_at)}</td>
+          <td><button class="btn-kill" onclick="terminate('${esc(s.session_id)}', this)">Terminate</button></td>
+        </tr>
+      `).join('');
+
+      document.getElementById('content').innerHTML = `
+        <table>
+          <thead><tr>
+            <th>GitHub User</th>
+            <th>Scenario</th>
+            <th>Status</th>
+            <th>VM IP</th>
+            <th>Time Left</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    async function terminate(id, btn) {
+      if (!confirm('Terminate this session? The VM will be destroyed and the user will be logged out.')) return;
+      btn.disabled = true;
+      btn.textContent = 'Terminating…';
+      await fetch(`/api/admin/sessions/${id}`, { method: 'DELETE' });
+      load();
+    }
+
+    load();
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>
