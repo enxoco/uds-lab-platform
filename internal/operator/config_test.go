@@ -3,7 +3,7 @@ package operator
 import (
 	"testing"
 
-	"github.com/defenseunicorns/uds-lab-platform/internal/sizing"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
 
 func TestParseAndSizeOverrides(t *testing.T) {

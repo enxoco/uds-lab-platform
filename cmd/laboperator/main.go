@@ -18,11 +18,11 @@ import (
 	kvv1 "kubevirt.io/api/core/v1"
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 
-	labplatform "github.com/defenseunicorns/uds-lab-platform"
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
-	"github.com/defenseunicorns/uds-lab-platform/internal/controller"
-	"github.com/defenseunicorns/uds-lab-platform/internal/operator"
-	"github.com/defenseunicorns/uds-lab-platform/internal/provider/kubevirt"
+	labplatform "github.com/enxoco/uds-lab-platform"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/controller"
+	"github.com/enxoco/uds-lab-platform/internal/operator"
+	"github.com/enxoco/uds-lab-platform/internal/provider/kubevirt"
 )
 
 var scheme = runtime.NewScheme()

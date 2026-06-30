@@ -13,9 +13,9 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
-	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
-	"github.com/defenseunicorns/uds-lab-platform/internal/sizing"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/scenario"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
 
 var ErrSessionExists = fmt.Errorf("active session already exists")
@@ -65,6 +65,7 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Ses
 	if err != nil {
 		return nil, fmt.Errorf("invalid size in scenario %q: %w", scenarioID, err)
 	}
+	id := uuid.New().String()
 	now := time.Now()
 	expiresAt := now.Add(m.ttl)
 
@@ -96,6 +97,19 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Ses
 		CreatedAt:      now,
 		ExpiresAt:      expiresAt,
 	}, nil
+}
+
+// All returns all LabSessions in the manager's namespace.
+func (m *Manager) All() []*Session {
+	list := &labv1.LabSessionList{}
+	if err := m.client.List(context.Background(), list, client.InNamespace(m.namespace)); err != nil {
+		return nil
+	}
+	out := make([]*Session, len(list.Items))
+	for i := range list.Items {
+		out[i] = lsToSession(&list.Items[i])
+	}
+	return out
 }
 
 // Get reads the current LabSession CR state and maps it to a Session.

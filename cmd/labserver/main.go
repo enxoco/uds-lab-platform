@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,11 +12,11 @@ import (
 	"strconv"
 	"time"
 
-	labplatform "github.com/defenseunicorns/uds-lab-platform"
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
-	"github.com/defenseunicorns/uds-lab-platform/internal/proxy"
-	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
-	"github.com/defenseunicorns/uds-lab-platform/internal/session"
+	labplatform "github.com/enxoco/uds-lab-platform"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/proxy"
+	"github.com/enxoco/uds-lab-platform/internal/scenario"
+	"github.com/enxoco/uds-lab-platform/internal/session"
 	"github.com/google/uuid"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -25,17 +24,10 @@ import (
 )
 
 type server struct {
-	mgr                *session.Manager
-	scenariosFS        fs.FS
-	staticFS           fs.FS
-	ttlMinutes         int
-	authStore          *auth.Store
-	workshopCode       string
-	githubClientID     string
-	githubClientSecret string
-	githubCallbackURL  string
-	adminUsers         map[string]bool
-	authEnabled        bool
+	mgr         *session.Manager
+	scenariosFS fs.FS
+	staticFS    fs.FS
+	ttlMinutes  int
 }
 
 func main() {
@@ -86,26 +78,13 @@ func main() {
 	mgr := session.NewManager(k8s, vmNamespace, time.Duration(ttlMinutes)*time.Minute, scenariosFS)
 
 	srv := &server{
-		mgr:                mgr,
-		scenariosFS:        scenariosFS,
-		staticFS:           staticFS,
-		ttlMinutes:         ttlMinutes,
-		authStore:          auth.NewStore(),
-		workshopCode:       workshopCode,
-		githubClientID:     githubClientID,
-		githubClientSecret: githubClientSecret,
-		githubCallbackURL:  githubCallbackURL,
-		adminUsers:         adminUsers,
-		authEnabled:        authEnabled,
+		mgr:         mgr,
+		scenariosFS: scenariosFS,
+		staticFS:    staticFS,
+		ttlMinutes:  ttlMinutes,
 	}
 
 	mux := http.NewServeMux()
-
-	// Auth routes (always public)
-	mux.HandleFunc("GET /login", srv.loginPage)
-	mux.HandleFunc("POST /login", srv.loginSubmit)
-	mux.HandleFunc("GET /auth/github", srv.authGitHub)
-	mux.HandleFunc("GET /auth/callback", srv.authCallback)
 
 	// Health check (always public)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -139,220 +118,46 @@ func main() {
 	log.Fatal(http.ListenAndServe(":"+port, mux))
 }
 
-func (s *server) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if s.authEnabled {
-			cid, err := r.Cookie("lab_client_id")
-			if err != nil {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-			user, ok := s.authStore.Get(cid.Value)
-			if !ok || !s.adminUsers[user] {
-				http.Error(w, "forbidden", http.StatusForbidden)
-				return
-			}
-		}
-		next(w, r)
-	}
-}
-
-// ── Auth handlers ─────────────────────────────────────────────────────────────
-
-func (s *server) loginPage(w http.ResponseWriter, r *http.Request) {
-	// Ensure client ID exists before login so the callback can bind to it.
-	clientID(w, r)
-	http.ServeFileFS(w, r, s.staticFS, "login.html")
-}
-
-func (s *server) loginSubmit(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
-		http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
-		return
-	}
-	if r.FormValue("code") != s.workshopCode {
-		http.Redirect(w, r, "/login?error=invalid", http.StatusFound)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{
-		Name:     "lab_code_ok",
-		Value:    "1",
-		Path:     "/",
-		MaxAge:   600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	http.Redirect(w, r, "/auth/github", http.StatusFound)
-}
-
-func (s *server) authGitHub(w http.ResponseWriter, r *http.Request) {
-	if _, err := r.Cookie("lab_code_ok"); err != nil {
-		http.Redirect(w, r, "/login", http.StatusFound)
-		return
-	}
-	state := uuid.New().String()
-	http.SetCookie(w, &http.Cookie{
-		Name:     "lab_oauth_state",
-		Value:    state,
-		Path:     "/",
-		MaxAge:   600,
-		HttpOnly: true,
-		SameSite: http.SameSiteLaxMode,
-	})
-	u := fmt.Sprintf(
-		"https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&state=%s&scope=read:user",
-		s.githubClientID, s.githubCallbackURL, state,
-	)
-	http.Redirect(w, r, u, http.StatusFound)
-}
-
-func (s *server) authCallback(w http.ResponseWriter, r *http.Request) {
-	stateCookie, err := r.Cookie("lab_oauth_state")
-	if err != nil || stateCookie.Value != r.URL.Query().Get("state") {
-		http.Error(w, "invalid OAuth state", http.StatusBadRequest)
-		return
-	}
-	http.SetCookie(w, &http.Cookie{Name: "lab_oauth_state", MaxAge: -1, Path: "/"})
-
-	token, err := s.exchangeGitHubCode(r.Context(), r.URL.Query().Get("code"))
-	if err != nil {
-		log.Printf("github token exchange: %v", err)
-		http.Error(w, "OAuth token exchange failed", http.StatusInternalServerError)
-		return
-	}
-
-	username, err := s.getGitHubUser(r.Context(), token)
-	if err != nil {
-		log.Printf("github user fetch: %v", err)
-		http.Error(w, "failed to fetch GitHub user", http.StatusInternalServerError)
-		return
-	}
-
-	cid := clientID(w, r)
-	s.authStore.Set(cid, username)
-	log.Printf("auth: client %s authenticated as github:%s", cid[:8], username)
-
-	http.SetCookie(w, &http.Cookie{Name: "lab_code_ok", MaxAge: -1, Path: "/"})
-	http.Redirect(w, r, "/", http.StatusFound)
-}
-
-func (s *server) exchangeGitHubCode(ctx context.Context, code string) (string, error) {
-	body, _ := json.Marshal(map[string]string{
-		"client_id":     s.githubClientID,
-		"client_secret": s.githubClientSecret,
-		"code":          code,
-	})
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://github.com/login/oauth/access_token", bytes.NewReader(body))
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Content-Type", "application/json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var result struct {
-		AccessToken string `json:"access_token"`
-		Error       string `json:"error"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", err
-	}
-	if result.Error != "" {
-		return "", fmt.Errorf("github: %s", result.Error)
-	}
-	return result.AccessToken, nil
-}
-
-func (s *server) getGitHubUser(ctx context.Context, token string) (string, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
-	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	var user struct {
-		Login string `json:"login"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&user); err != nil {
-		return "", err
-	}
-	if user.Login == "" {
-		return "", fmt.Errorf("empty GitHub username in response")
-	}
-	return user.Login, nil
-}
 
 // ── Admin handlers ────────────────────────────────────────────────────────────
 
 func (s *server) adminPage(w http.ResponseWriter, r *http.Request) {
-	s.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFileFS(w, r, s.staticFS, "admin.html")
-	})(w, r)
+	http.ServeFileFS(w, r, s.staticFS, "admin.html")
 }
 
 func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {
-	s.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		all := s.mgr.All()
-		entries := s.authStore.All()
-		userMap := make(map[string]string, len(entries))
-		for _, e := range entries {
-			userMap[e.ClientID] = e.GitHubUser
-		}
+	all := s.mgr.All()
 
-		type adminSession struct {
-			SessionID  string    `json:"session_id"`
-			GitHubUser string    `json:"github_user"`
-			Scenario   string    `json:"scenario"`
-			VMIP       string    `json:"vm_ip"`
-			Status     string    `json:"status"`
-			ExpiresAt  time.Time `json:"expires_at"`
-		}
+	type adminSession struct {
+		SessionID string    `json:"session_id"`
+		ClientID  string    `json:"client_id"`
+		Scenario  string    `json:"scenario"`
+		ServiceDNS string   `json:"service_dns"`
+		Status    string    `json:"status"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
 
-		result := make([]adminSession, 0, len(all))
-		for _, sess := range all {
-			result = append(result, adminSession{
-				SessionID:  sess.ID,
-				GitHubUser: userMap[sess.ClientID],
-				Scenario:   sess.Scenario,
-				VMIP:       sess.VMIP,
-				Status:     string(sess.Status),
-				ExpiresAt:  sess.ExpiresAt,
-			})
-		}
-		jsonOK(w, result)
-	})(w, r)
+	result := make([]adminSession, 0, len(all))
+	for _, sess := range all {
+		result = append(result, adminSession{
+			SessionID:  sess.ID,
+			ClientID:   sess.ClientID,
+			Scenario:   sess.Scenario,
+			ServiceDNS: sess.ServiceDNS,
+			Status:     string(sess.Status),
+			ExpiresAt:  sess.ExpiresAt,
+		})
+	}
+	jsonOK(w, result)
 }
 
 func (s *server) adminDeleteSession(w http.ResponseWriter, r *http.Request) {
-	s.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		sess, ok := s.mgr.Get(id)
-		if !ok {
-			jsonError(w, "not found", http.StatusNotFound)
-			return
-		}
-		clientID := sess.ClientID
-		if err := s.mgr.Delete(r.Context(), id); err != nil {
-			jsonError(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		s.authStore.Delete(clientID)
-		w.WriteHeader(http.StatusNoContent)
-	})(w, r)
+	id := r.PathValue("id")
+	if err := s.mgr.Delete(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── Existing handlers ─────────────────────────────────────────────────────────
@@ -622,7 +427,7 @@ func (s *server) ideFileProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IDE not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:7680", sess.VMIP), fmt.Sprintf("/ide-api/%s", id)).ServeHTTP(w, r)
+	proxy.Handler(fmt.Sprintf("http://%s:7680", sess.ServiceDNS), fmt.Sprintf("/ide-api/%s", id)).ServeHTTP(w, r)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {

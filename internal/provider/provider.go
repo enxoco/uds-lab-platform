@@ -7,7 +7,7 @@ package provider
 import (
 	"context"
 
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
 )
 
 // Result is the observed outcome of a Reconcile, mapped onto LabSession status.

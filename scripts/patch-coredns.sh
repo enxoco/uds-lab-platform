@@ -49,5 +49,17 @@ log "Restarting CoreDNS to pick up changes..."
 kubectl rollout restart deployment/coredns -n kube-system
 kubectl rollout status deployment/coredns -n kube-system --timeout=60s
 
+# Authservice starts during bundle deploy before CoreDNS is patched, so it
+# caches a failed OIDC discovery from keycloak.admin.uds.dev (resolves to
+# 127.0.0.1 via public DNS). Restart forces it to re-fetch JWKS keys now
+# that CoreDNS resolves the hostname correctly.
+if kubectl get deployment authservice -n authservice &>/dev/null; then
+  log "Restarting Authservice to re-fetch Keycloak OIDC config..."
+  kubectl rollout restart deployment/authservice -n authservice
+  kubectl rollout status deployment/authservice -n authservice --timeout=120s
+else
+  warn "Authservice deployment not found in namespace 'authservice' — skipping restart"
+fi
+
 log "CoreDNS patched. Verifications:"
 log "  kubectl exec -n kube-system deploy/coredns -- nslookup sso.uds.dev"

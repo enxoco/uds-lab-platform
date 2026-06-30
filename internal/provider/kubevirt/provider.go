@@ -28,11 +28,11 @@ import (
 	kvv1 "kubevirt.io/api/core/v1"
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
-	"github.com/defenseunicorns/uds-lab-platform/internal/cloudinit"
-	"github.com/defenseunicorns/uds-lab-platform/internal/provider"
-	"github.com/defenseunicorns/uds-lab-platform/internal/scenario"
-	"github.com/defenseunicorns/uds-lab-platform/internal/sizing"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/cloudinit"
+	"github.com/enxoco/uds-lab-platform/internal/provider"
+	"github.com/enxoco/uds-lab-platform/internal/scenario"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
 
 const (

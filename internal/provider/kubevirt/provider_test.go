@@ -14,7 +14,7 @@ import (
 
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
 )
 
 // scenariosFS points at the real scenario fixtures relative to this package.

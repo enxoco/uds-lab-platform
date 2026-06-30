@@ -9,7 +9,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	"github.com/defenseunicorns/uds-lab-platform/internal/sizing"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
 
 // Config is the operator ConfigMap, mounted as a file (path in OPERATOR_CONFIG).

@@ -16,8 +16,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	labv1 "github.com/defenseunicorns/uds-lab-platform/api/v1alpha1"
-	"github.com/defenseunicorns/uds-lab-platform/internal/provider"
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/provider"
 )
 
 const finalizer = "lab.uds.dev/teardown"
@@ -136,7 +136,7 @@ func defaultProbe(ctx context.Context, serviceDNS string) bool {
 	if err != nil {
 		return false
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
 }
 

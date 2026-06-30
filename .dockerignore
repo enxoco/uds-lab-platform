@@ -9,7 +9,6 @@ packages/
 *.qcow2
 .tmp-*
 web/static/ide-assets/
-web/ide-src/
 .codegraph/
 hack/
 scripts/
