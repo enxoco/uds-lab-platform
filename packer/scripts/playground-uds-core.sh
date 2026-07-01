@@ -29,5 +29,8 @@ uds zarf tools kubectl get pods -A
 # crash loops from Docker restarting containers in arbitrary order.
 log "Stopping cluster cleanly for snapshot..."
 k3d cluster stop uds
+# WARNING: do NOT prune containers or images here. The stopped k3d containers
+# must exist in the snapshot — k3d cluster start on VM boot restarts them.
+# Pruning removes them and leaves k3d with nothing to start.
 
 log "UDS Core playground build complete."

@@ -1,270 +1,154 @@
+// Package session is the thin server-side session layer for the KubeVirt backend
+// (Phase E, ADR-0010/0011). Create/Get/Delete operate on LabSession CRs; the
+// operator reconciles them into VMIs.
 package session
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io/fs"
-	"log"
-	"net/http"
-	"strings"
-	"sync"
-	"text/template"
 	"time"
 
-	"github.com/enxoco/uds-lab-platform/internal/hetzner"
 	"github.com/google/uuid"
-	"gopkg.in/yaml.v3"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/scenario"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
-
-type VMConfig struct {
-	ServerType   string
-	Location     string
-	Image        string
-	SSHKeyNames  []string
-	UserDataTmpl *template.Template
-	ScenariosFS  fs.FS
-	InjectPy     string
-}
-
-type Manager struct {
-	mu             sync.RWMutex
-	sessions       map[string]*Session
-	clientSessions map[string]string // clientID → sessionID
-	hcloud         *hetzner.Client
-	ttl            time.Duration
-	vmCfg          VMConfig
-}
-
-func NewManager(hcloud *hetzner.Client, ttl time.Duration, vmCfg VMConfig) *Manager {
-	m := &Manager{
-		sessions:       make(map[string]*Session),
-		clientSessions: make(map[string]string),
-		hcloud:         hcloud,
-		ttl:            ttl,
-		vmCfg:          vmCfg,
-	}
-	go m.cleanupLoop()
-	return m
-}
 
 var ErrSessionExists = fmt.Errorf("active session already exists")
 
-type userDataInput struct {
-	SetupSh        string
-	VerifyScripts  map[string]string
-	BrowserEnabled bool
-	InjectPy       string
-	SessionID      string
+// Manager creates/reads/deletes LabSession CRs. The operator owns all VM
+// lifecycle; the server only touches the CR.
+type Manager struct {
+	client      client.Client
+	namespace   string
+	ttl         time.Duration
+	scenariosFS fs.FS
 }
 
-func (m *Manager) Create(ctx context.Context, clientID, scenario string) (*Session, error) {
-	m.mu.RLock()
-	if sid, ok := m.clientSessions[clientID]; ok {
-		if _, alive := m.sessions[sid]; alive {
-			m.mu.RUnlock()
+// NewManager builds a Manager wired to the cluster.
+func NewManager(k8s client.Client, namespace string, ttl time.Duration, scenariosFS fs.FS) *Manager {
+	return &Manager{
+		client:      k8s,
+		namespace:   namespace,
+		ttl:         ttl,
+		scenariosFS: scenariosFS,
+	}
+}
+
+// Create enforces one active session per clientID (TOCTOU-safe via LIST then
+// CREATE), reads scenario metadata, and creates the LabSession CR.
+func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Session, error) {
+	// Reject if a non-terminal session already exists for this client.
+	existing := &labv1.LabSessionList{}
+	if err := m.client.List(ctx, existing,
+		client.InNamespace(m.namespace),
+		client.MatchingLabels{"lab.uds.dev/client": clientID},
+	); err != nil {
+		return nil, fmt.Errorf("list sessions: %w", err)
+	}
+	for i := range existing.Items {
+		phase := existing.Items[i].Status.Phase
+		if phase != labv1.PhaseFailed && phase != labv1.PhaseExpired {
 			return nil, ErrSessionExists
 		}
 	}
-	m.mu.RUnlock()
 
-	setupSh, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/setup.sh")
+	sc, err := scenario.Load(m.scenariosFS, scenarioID)
 	if err != nil {
-		return nil, fmt.Errorf("scenario %q not found: %w", scenario, err)
+		return nil, fmt.Errorf("scenario %q: %w", scenarioID, err)
 	}
-
-	// Read flags from scenario.yaml
-	browserEnabled := false
-	isPlayground := false
-	imageOverride := ""
-	serverTypeOverride := ""
-	if yamlData, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/scenario.yaml"); err == nil {
-		var meta struct {
-			Browser    bool   `yaml:"browser"`
-			Playground bool   `yaml:"playground"`
-			Image      string `yaml:"image"`
-			ServerType string `yaml:"serverType"`
-		}
-		if yaml.Unmarshal(yamlData, &meta) == nil {
-			browserEnabled = meta.Browser
-			isPlayground = meta.Playground
-			imageOverride = meta.Image
-			serverTypeOverride = meta.ServerType
-		}
-	}
-
-	var vmImage string
-
-	var labelSelector string
-
-	if imageOverride != "" {
-		labelSelector = "role=uds-lab-playground,tier=" + imageOverride
-	} else if isPlayground {
-		tier := strings.TrimPrefix(scenario, "playground-")
-		labelSelector = "role=uds-lab-playground,tier=" + tier
-	} else {
-		labelSelector = "role=uds-lab-base"
-	}
-
-	found, err := m.hcloud.FindLatestSnapshot(ctx, labelSelector)
+	sz, err := sizing.Normalize(sizing.Size(sc.Size))
 	if err != nil {
-		return nil, fmt.Errorf("find snapshot for scenario %q with labels %q: %w", scenario, labelSelector, err)
+		return nil, fmt.Errorf("invalid size in scenario %q: %w", scenarioID, err)
 	}
-
-	if found == "" {
-		return nil, fmt.Errorf("no snapshot found matching labels %q — build it first with packer/build-images.sh", labelSelector)
-	}
-
-	vmImage = found
-
-	log.Printf("create session: scenario=%s image=%s", scenario, vmImage)
-
-	verifyScripts := map[string]string{}
-	if entries, err := fs.ReadDir(m.vmCfg.ScenariosFS, scenario+"/verify"); err == nil {
-		for _, e := range entries {
-			if e.IsDir() {
-				continue
-			}
-			content, err := fs.ReadFile(m.vmCfg.ScenariosFS, scenario+"/verify/"+e.Name())
-			if err == nil {
-				verifyScripts[e.Name()] = string(content)
-			}
-		}
-	}
-
 	id := uuid.New().String()
-
-	var userData bytes.Buffer
-	if err := m.vmCfg.UserDataTmpl.Execute(&userData, userDataInput{
-		SetupSh:        string(setupSh),
-		VerifyScripts:  verifyScripts,
-		BrowserEnabled: browserEnabled,
-		InjectPy:       m.vmCfg.InjectPy,
-		SessionID:      id,
-	}); err != nil {
-		return nil, fmt.Errorf("render user-data: %w", err)
-	}
 	now := time.Now()
+	expiresAt := now.Add(m.ttl)
 
-	serverType := m.vmCfg.ServerType
-	if serverTypeOverride != "" {
-		serverType = serverTypeOverride
+	ls := &labv1.LabSession{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      id,
+			Namespace: m.namespace,
+			Labels:    map[string]string{"lab.uds.dev/client": clientID},
+		},
+		Spec: labv1.LabSessionSpec{
+			SessionID:      id,
+			ScenarioID:     scenarioID,
+			ClientID:       clientID,
+			Size:           string(sz),
+			BrowserEnabled: sc.Browser,
+			ExpiresAt:      metav1.NewTime(expiresAt),
+		},
+	}
+	if err := m.client.Create(ctx, ls); err != nil {
+		return nil, fmt.Errorf("create LabSession: %w", err)
 	}
 
-	vmID, vmIP, err := m.hcloud.CreateServer(ctx, hetzner.CreateServerRequest{
-		Name:       "lab-" + id[:8],
-		ServerType: serverType,
-		Image:      vmImage,
-		Location:   m.vmCfg.Location,
-		UserData:   userData.String(),
-		SSHKeys:    m.vmCfg.SSHKeyNames,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("create VM: %w", err)
-	}
-
-	s := &Session{
+	return &Session{
 		ID:             id,
-		Scenario:       scenario,
+		Scenario:       scenarioID,
 		ClientID:       clientID,
-		VMID:           vmID,
-		VMIP:           vmIP,
 		Status:         StatusProvisioning,
-		BrowserEnabled: browserEnabled,
+		BrowserEnabled: sc.Browser,
 		CreatedAt:      now,
-		ExpiresAt:      now.Add(m.ttl),
-	}
-
-	m.mu.Lock()
-	m.sessions[id] = s
-	m.clientSessions[clientID] = id
-	m.mu.Unlock()
-
-	go m.pollReady(s)
-	return s, nil
+		ExpiresAt:      expiresAt,
+	}, nil
 }
 
-func (m *Manager) Get(id string) (*Session, bool) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	s, ok := m.sessions[id]
-	return s, ok
-}
-
+// All returns all LabSessions in the manager's namespace.
 func (m *Manager) All() []*Session {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	out := make([]*Session, 0, len(m.sessions))
-	for _, s := range m.sessions {
-		out = append(out, s)
+	list := &labv1.LabSessionList{}
+	if err := m.client.List(context.Background(), list, client.InNamespace(m.namespace)); err != nil {
+		return nil
+	}
+	out := make([]*Session, len(list.Items))
+	for i := range list.Items {
+		out[i] = lsToSession(&list.Items[i])
 	}
 	return out
 }
 
+// Get reads the current LabSession CR state and maps it to a Session.
+func (m *Manager) Get(id string) (*Session, bool) {
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(context.Background(), client.ObjectKey{
+		Name:      id,
+		Namespace: m.namespace,
+	}, ls); err != nil {
+		return nil, false
+	}
+	return lsToSession(ls), true
+}
+
+// Delete deletes the LabSession CR. Owner references cascade to VMI/Service/NP.
 func (m *Manager) Delete(ctx context.Context, id string) error {
-	m.mu.Lock()
-	s, ok := m.sessions[id]
-	if ok {
-		delete(m.sessions, id)
-		delete(m.clientSessions, s.ClientID)
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
+		return fmt.Errorf("session %q not found: %w", id, err)
 	}
-	m.mu.Unlock()
-
-	if !ok {
-		return fmt.Errorf("session %q not found", id)
-	}
-	return m.hcloud.DeleteServer(ctx, s.VMID)
+	return m.client.Delete(ctx, ls)
 }
 
-// pollReady polls ttyd on the VM until it responds, then marks the session ready.
-func (m *Manager) pollReady(s *Session) {
-	url := fmt.Sprintf("http://%s:7681/", s.VMIP)
-	client := &http.Client{Timeout: 3 * time.Second}
-
-	for {
-		time.Sleep(5 * time.Second)
-
-		m.mu.RLock()
-		_, alive := m.sessions[s.ID]
-		m.mu.RUnlock()
-		if !alive {
-			return
-		}
-
-		resp, err := client.Get(url)
-		if err == nil {
-			_ = resp.Body.Close()
-			if resp.StatusCode == http.StatusOK {
-				m.mu.Lock()
-				if sess, ok := m.sessions[s.ID]; ok {
-					sess.Status = StatusReady
-				}
-				m.mu.Unlock()
-				return
-			}
-		}
+func lsToSession(ls *labv1.LabSession) *Session {
+	status := StatusProvisioning
+	switch ls.Status.Phase {
+	case labv1.PhaseReady:
+		status = StatusReady
+	case labv1.PhaseFailed, labv1.PhaseExpired:
+		status = StatusExpired
 	}
-}
-
-func (m *Manager) cleanupLoop() {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for range ticker.C {
-		m.mu.Lock()
-		expired := []*Session{}
-		for _, s := range m.sessions {
-			if time.Now().After(s.ExpiresAt) {
-				expired = append(expired, s)
-				delete(m.sessions, s.ID)
-			}
-		}
-		m.mu.Unlock()
-
-		for _, s := range expired {
-			m.mu.Lock()
-			delete(m.clientSessions, s.ClientID)
-			m.mu.Unlock()
-			_ = m.hcloud.DeleteServer(context.Background(), s.VMID)
-		}
+	return &Session{
+		ID:             ls.Spec.SessionID,
+		Scenario:       ls.Spec.ScenarioID,
+		ClientID:       ls.Spec.ClientID,
+		ServiceDNS:     ls.Status.ServiceDNS,
+		Status:         status,
+		BrowserEnabled: ls.Spec.BrowserEnabled,
+		CreatedAt:      ls.CreationTimestamp.Time,
+		ExpiresAt:      ls.Spec.ExpiresAt.Time,
 	}
 }

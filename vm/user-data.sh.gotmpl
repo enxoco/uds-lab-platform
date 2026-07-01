@@ -8,6 +8,43 @@ touch "$LOG"
 
 log() { echo "[$(date '+%H:%M:%S')] $*" | tee -a "$LOG"; }
 
+# ── DNS: wildcard *.uds.dev → 127.0.0.1 via dnsmasq ──────────────────────────
+# The outer CoreDNS NodeHosts overrides specific *.uds.dev names to the outer
+# cluster's MetalLB IPs. VMs running an inner k3d cluster need ALL *.uds.dev
+# to resolve to 127.0.0.1. dnsmasq handles the wildcard; all other queries
+# forward to whatever CoreDNS the pod network injected.
+log "Configuring dnsmasq for *.uds.dev wildcard..."
+
+# Install if not baked into the image (pre-dnsmasq builds)
+command -v dnsmasq &>/dev/null || apt-get install -y -q dnsmasq
+
+# no-resolv: dnsmasq must NOT watch /etc/resolv.conf — we overwrite it to point
+# at 127.0.0.1 (dnsmasq itself), which would create a forwarding loop otherwise.
+# Use public DNS for internet; *.uds.dev resolves locally via the address= rule.
+cat > /etc/dnsmasq.d/uds-dev.conf << 'EOF'
+no-resolv
+address=/.uds.dev/127.0.0.1
+server=1.1.1.1
+server=8.8.8.8
+EOF
+
+# Disable systemd-resolved stub listener so dnsmasq can own :53
+mkdir -p /etc/systemd/resolved.conf.d
+printf '[Resolve]\nDNSStubListener=no\n' > /etc/systemd/resolved.conf.d/no-stub.conf
+systemctl restart systemd-resolved
+
+# Wait for systemd-resolved to release :53 before dnsmasq tries to bind it.
+# The DNSStubListener=no change needs a moment to take effect.
+timeout 15 bash -c 'while ss -tlnp | grep -q ":53 "; do sleep 0.3; done' \
+  || log "Warning: :53 still in use after 15s — dnsmasq may fail to start"
+
+systemctl enable --now dnsmasq
+
+# Break the symlink (Ubuntu resolv.conf → /run/systemd/resolve/stub-resolv.conf)
+# so systemd-resolved can never reassert it after we set it to 127.0.0.1.
+rm -f /etc/resolv.conf
+echo "nameserver 127.0.0.1" > /etc/resolv.conf
+
 # ── Scenario setup ─────────────────────────────────────────────────────────────
 SCENARIO_DIR="/opt/scenario"
 mkdir -p "$SCENARIO_DIR"

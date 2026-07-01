@@ -14,8 +14,7 @@ type Session struct {
 	ID             string    `json:"id"`
 	Scenario       string    `json:"scenario"`
 	ClientID       string    `json:"-"`
-	VMID           int64     `json:"-"`
-	VMIP           string    `json:"vm_ip,omitempty"`
+	ServiceDNS     string    `json:"service_dns,omitempty"`
 	Status         Status    `json:"status"`
 	BrowserEnabled bool      `json:"browser_enabled"`
 	CreatedAt      time.Time `json:"created_at"`

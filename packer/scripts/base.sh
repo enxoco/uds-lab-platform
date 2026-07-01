@@ -14,7 +14,19 @@ apt-get update -q
 apt-get upgrade -y -q
 apt-get install -y -q \
   tmux curl python3 \
-  xvfb x11vnc novnc chromium-browser
+  xvfb x11vnc novnc \
+  dnsmasq
+
+# chromium-browser on Ubuntu 24.04 is a snap redirect that hangs in QEMU.
+# Use Google Chrome stable (real deb, official apt repo) instead.
+log "Installing Google Chrome..."
+apt-get install -y -q ca-certificates
+curl -fsSL https://dl.google.com/linux/linux_signing_key.pub \
+  | gpg --dearmor -o /etc/apt/keyrings/google-chrome.gpg
+echo "deb [arch=amd64 signed-by=/etc/apt/keyrings/google-chrome.gpg] https://dl.google.com/linux/chrome/deb/ stable main" \
+  > /etc/apt/sources.list.d/google-chrome.list
+apt-get update -q
+apt-get install -y -q google-chrome-stable
 
 # ── ttyd ───────────────────────────────────────────────────────────────────────
 log "Installing ttyd..."
@@ -185,23 +197,30 @@ After=lab-xvfb.service
 Type=simple
 Environment=DISPLAY=:99
 Environment=HOME=/root
-ExecStart=/usr/bin/chromium-browser \
+ExecStart=/usr/bin/google-chrome-stable \
   --no-sandbox \
   --disable-gpu \
   --disable-dev-shm-usage \
   --no-first-run \
+  --no-default-browser-check \
+  --disable-sync \
+  --disable-extensions \
+  --user-data-dir=/tmp/chrome-data \
   --kiosk \
   --window-size=1920,1080 \
   --window-position=0,0 \
   --remote-debugging-port=9222 \
   --remote-debugging-address=127.0.0.1 \
-  about:blank
+  http://localhost:7681
 Restart=always
 RestartSec=5
 
 [Install]
 WantedBy=multi-user.target
 EOF
+
+# dnsmasq is installed but configured at boot via user-data
+systemctl disable dnsmasq
 
 systemctl daemon-reload
 

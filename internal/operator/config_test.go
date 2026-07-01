@@ -1,0 +1,64 @@
+package operator
+
+import (
+	"testing"
+
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
+)
+
+func TestParseAndSizeOverrides(t *testing.T) {
+	data := []byte(`
+provider: kubevirt
+sizes:
+  small:
+    cpu: "2"
+    memory: "4Gi"
+  large:
+    cpu: "8"
+    memory: "16Gi"
+goldenPVCs:
+  base: golden-base
+  uds-core: golden-uds-core
+goldenPVCNamespace: uds-lab-vms
+goldenPVCDiskSize: "80Gi"
+`)
+	c, err := parse(data)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if c.Provider != "kubevirt" {
+		t.Errorf("provider = %q, want kubevirt", c.Provider)
+	}
+	if c.GoldenPVCs["uds-core"] == "" {
+		t.Errorf("missing uds-core golden PVC name")
+	}
+
+	overrides, err := c.SizeOverrides()
+	if err != nil {
+		t.Fatalf("SizeOverrides: %v", err)
+	}
+	if got := overrides[sizing.Small]; got.CPU != "2" || got.Memory != "4Gi" {
+		t.Errorf("small override = %+v", got)
+	}
+	// medium not configured -> falls back to defaults via sizing.Resolve
+	if spec, ok := sizing.Resolve(sizing.Medium, overrides); !ok || spec != sizing.Defaults[sizing.Medium] {
+		t.Errorf("medium should resolve to defaults, got %+v ok=%v", spec, ok)
+	}
+}
+
+func TestSizeOverridesRejectsUnknownTier(t *testing.T) {
+	c := &Config{Sizes: map[string]sizeEntry{"xlarge": {CPU: "16", Memory: "32Gi"}}}
+	if _, err := c.SizeOverrides(); err == nil {
+		t.Fatal("expected error for unknown tier xlarge")
+	}
+}
+
+func TestLoadMissingPathIsEmpty(t *testing.T) {
+	c, err := Load("")
+	if err != nil {
+		t.Fatalf("Load(\"\"): %v", err)
+	}
+	if len(c.Sizes) != 0 || len(c.GoldenPVCs) != 0 {
+		t.Errorf("expected empty config, got %+v", c)
+	}
+}

@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: lab-operator-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    provider: kubevirt
+    goldenPVCNamespace: {{ .Values.goldenPVCNamespace | default .Values.vmNamespace | quote }}
+    goldenPVCDiskSize: {{ .Values.goldenPVCDiskSize | default "80Gi" | quote }}
+    goldenPVCs:
+    {{- range $tier, $pvc := .Values.goldenPVCs }}
+      {{ $tier }}: {{ $pvc | quote }}
+    {{- end }}
