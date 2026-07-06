@@ -110,6 +110,7 @@ func main() {
 	mux.HandleFunc("GET /api/admin/sessions", srv.adminListSessions)
 	mux.HandleFunc("DELETE /api/admin/sessions/{id}", srv.adminDeleteSession)
 	mux.HandleFunc("GET /admin", srv.adminPage)
+	mux.HandleFunc("GET /admin/csm", srv.csmDashboard)
 
 	// Static file server (catch-all)
 	mux.Handle("/", http.FileServerFS(staticFS))
@@ -123,6 +124,10 @@ func main() {
 
 func (s *server) adminPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, s.staticFS, "admin.html")
+}
+
+func (s *server) csmDashboard(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, s.staticFS, "csm.html")
 }
 
 func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {

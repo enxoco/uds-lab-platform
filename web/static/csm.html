@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDS Labs — CSM Dashboard</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .csm-wrap {
+      padding: 24px;
+    }
+
+    .seed-banner {
+      background: rgba(210, 153, 34, 0.08);
+      border: 1px solid rgba(210, 153, 34, 0.25);
+      border-radius: var(--radius);
+      padding: 9px 14px;
+      font-size: 12px;
+      color: var(--warn);
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .seed-banner code {
+      background: rgba(210, 153, 34, 0.15);
+      padding: 1px 5px;
+      border-radius: 3px;
+      font-family: var(--mono);
+    }
+
+    .summary-bar {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .summary-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      min-width: 120px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .summary-card.card-success { border-color: rgba(63, 185, 80, 0.35); }
+    .summary-card.card-warn    { border-color: rgba(210, 153, 34, 0.35); }
+    .summary-card.card-danger  { border-color: rgba(248, 81, 73, 0.35); }
+
+    .card-value {
+      font-size: 22px;
+      font-weight: 700;
+      line-height: 1;
+      color: var(--text);
+    }
+
+    .card-success .card-value { color: var(--success); }
+    .card-warn    .card-value { color: var(--warn); }
+    .card-danger  .card-value { color: var(--danger); }
+
+    .card-label {
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+
+    .dashboard-layout {
+      display: flex;
+      gap: 16px;
+      align-items: flex-start;
+    }
+
+    .table-wrap {
+      flex: 1;
+      overflow-x: auto;
+      min-width: 0;
+    }
+
+    .csm-table {
+      width: 100%;
+      border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      font-size: 13px;
+    }
+
+    .csm-table th {
+      padding: 10px 14px;
+      text-align: center;
+      background: var(--bg);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+
+    .csm-table th:first-child,
+    .csm-table th:nth-child(2),
+    .csm-table th:nth-child(8),
+    .csm-table th:nth-child(9) {
+      text-align: left;
+    }
+
+    .csm-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      vertical-align: middle;
+    }
+
+    .csm-table tbody tr:last-child td { border-bottom: none; }
+
+    .csm-table tbody tr {
+      cursor: pointer;
+      transition: background 0.1s;
+      border-left: 3px solid transparent;
+    }
+
+    .csm-table tbody tr:hover  { background: rgba(255,255,255,0.02); }
+    .csm-table tbody tr.selected { background: rgba(88,166,255,0.05); border-left-color: var(--accent); }
+    .csm-table tbody tr.row-danger  { border-left-color: var(--danger); }
+    .csm-table tbody tr.row-warn    { border-left-color: var(--warn); }
+    .csm-table tbody tr.row-success { border-left-color: var(--success); }
+
+    .customer-name { font-weight: 600; }
+    .customer-scenario { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+
+    .step-cell {
+      text-align: center;
+      min-width: 64px;
+      font-size: 12px;
+      font-family: var(--mono);
+    }
+
+    .cell-passed { color: var(--success); }
+    .cell-failed { color: var(--danger); }
+    .cell-active { color: var(--warn); }
+    .cell-stuck  { color: var(--danger); }
+    .cell-pending { color: var(--border); }
+
+    .cell-inner {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1px;
+    }
+
+    .cell-icon { font-size: 14px; line-height: 1; }
+    .cell-dur  { font-size: 10px; opacity: 0.8; }
+
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+
+    .badge-graduated { background: rgba(63,185,80,0.12); color: var(--success); border: 1px solid rgba(63,185,80,0.3); }
+    .badge-active    { background: rgba(88,166,255,0.1);  color: var(--accent);  border: 1px solid rgba(88,166,255,0.25); }
+    .badge-stuck     { background: rgba(210,153,34,0.1);  color: var(--warn);    border: 1px solid rgba(210,153,34,0.3); }
+    .badge-failed    { background: rgba(248,81,73,0.1);   color: var(--danger);  border: 1px solid rgba(248,81,73,0.3); }
+
+    .time-muted {
+      font-size: 12px;
+      color: var(--text-muted);
+      white-space: nowrap;
+    }
+
+    /* Drill panel */
+    .drill-panel {
+      width: 320px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      display: none;
+      position: sticky;
+      top: 16px;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+    }
+
+    .drill-panel.open { display: block; }
+
+    .drill-header {
+      padding: 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+      position: sticky;
+      top: 0;
+      background: var(--surface);
+      z-index: 1;
+    }
+
+    .drill-title    { font-weight: 600; font-size: 14px; }
+    .drill-subtitle { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+    .drill-close {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 20px;
+      padding: 0;
+      line-height: 1;
+      flex-shrink: 0;
+    }
+
+    .drill-close:hover { color: var(--text); }
+
+    .drill-body { padding: 16px; }
+
+    .drill-meta {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .drill-meta-row {
+      display: flex;
+      gap: 8px;
+      font-size: 12px;
+      align-items: center;
+    }
+
+    .drill-meta-label {
+      color: var(--text-muted);
+      min-width: 56px;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      font-weight: 600;
+    }
+
+    .drill-steps-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 10px;
+    }
+
+    .drill-step {
+      display: flex;
+      gap: 10px;
+      padding: 8px 0;
+      border-bottom: 1px solid #21262d;
+      font-size: 12px;
+      align-items: flex-start;
+    }
+
+    .drill-step:last-child { border-bottom: none; }
+
+    .drill-step-icon {
+      width: 18px;
+      text-align: center;
+      flex-shrink: 0;
+      margin-top: 1px;
+      font-size: 13px;
+    }
+
+    .drill-step-content { flex: 1; }
+
+    .drill-step-name   { font-weight: 500; color: var(--text); }
+    .drill-step-detail { color: var(--text-muted); margin-top: 2px; font-size: 11px; }
+    .drill-step-error  { color: var(--danger); margin-top: 3px; font-size: 11px; line-height: 1.4; }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">UDS Labs</span>
+    <span class="badge" style="background:rgba(88,166,255,0.12);color:var(--accent);border:1px solid rgba(88,166,255,0.3);">CSM</span>
+    <a href="/admin" style="margin-left:auto;font-size:13px">Active Sessions →</a>
+    <a href="/" style="font-size:13px">← Catalog</a>
+  </nav>
+
+  <div class="csm-wrap">
+    <div class="seed-banner">
+      <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0">
+        <path d="M8 .5a.5.5 0 0 1 .448.276l7.5 14A.5.5 0 0 1 15.5 15.5h-15a.5.5 0 0 1-.448-.724l7.5-14A.5.5 0 0 1 8 .5zM8 5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 1 0v-4A.5.5 0 0 0 8 5zm0 8.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5z"/>
+      </svg>
+      <span><strong>Seed data</strong> — Realistic but hardcoded. Wire to live <code>step_events</code> in Week 4.</span>
+    </div>
+
+    <div class="summary-bar" id="summary-bar"></div>
+
+    <div class="dashboard-layout">
+      <div class="table-wrap">
+        <table class="csm-table">
+          <thead>
+            <tr>
+              <th style="text-align:left">Customer</th>
+              <th style="text-align:left">CSE</th>
+              <th title="Install prerequisites">Step 1</th>
+              <th title="Deploy UDS Core">Step 2</th>
+              <th title="Write zarf.yaml">Step 3</th>
+              <th title="Write UDS Package CR">Step 4</th>
+              <th title="Build, deploy, verify">Step 5</th>
+              <th style="text-align:left">Status</th>
+              <th style="text-align:left">Last Active</th>
+            </tr>
+          </thead>
+          <tbody id="csm-tbody"></tbody>
+        </table>
+      </div>
+      <div class="drill-panel" id="drill-panel"></div>
+    </div>
+  </div>
+
+  <script>
+    const STEP_NAMES = [
+      'Install prerequisites',
+      'Deploy UDS Core',
+      'Write zarf.yaml',
+      'UDS Package CR',
+      'Build, deploy, verify'
+    ];
+
+    const CUSTOMERS = [
+      {
+        id: 'gamma-federal',
+        name: 'Gamma Federal',
+        scenario: 'UDS Package Quickstart',
+        cse: 'Sam K.',
+        steps: [
+          { status: 'passed', completedAt: '2026-06-28T10:00:00Z', durationH: 2 },
+          { status: 'failed',  failedAt:   '2026-06-29T14:00:00Z', durationH: 168, reason: 'k3d cluster startup failure: insufficient disk space on host VM' },
+          { status: 'pending' },
+          { status: 'pending' },
+          { status: 'pending' }
+        ]
+      },
+      {
+        id: 'alpha-industries',
+        name: 'Alpha Industries',
+        scenario: 'UDS Package Quickstart',
+        cse: 'Jordan M.',
+        steps: [
+          { status: 'passed', completedAt: '2026-07-04T10:00:00Z', durationH: 2 },
+          { status: 'passed', completedAt: '2026-07-04T15:00:00Z', durationH: 5 },
+          { status: 'active', startedAt:   '2026-07-04T16:00:00Z' },
+          { status: 'pending' },
+          { status: 'pending' }
+        ]
+      },
+      {
+        id: 'beta-systems',
+        name: 'Beta Systems',
+        scenario: 'UDS Package Quickstart',
+        cse: 'Taylor R.',
+        steps: [
+          { status: 'passed', completedAt: '2026-07-03T11:00:00Z', durationH: 1.5 },
+          { status: 'passed', completedAt: '2026-07-03T15:00:00Z', durationH: 3 },
+          { status: 'passed', completedAt: '2026-07-04T10:00:00Z', durationH: 2 },
+          { status: 'passed', completedAt: '2026-07-04T13:00:00Z', durationH: 1.5 },
+          { status: 'active', startedAt:   '2026-07-06T10:00:00Z' }
+        ]
+      },
+      {
+        id: 'delta-aerospace',
+        name: 'Delta Aerospace',
+        scenario: 'UDS Package Quickstart',
+        cse: 'Jordan M.',
+        steps: [
+          { status: 'passed', completedAt: '2026-07-01T09:00:00Z', durationH: 1.5 },
+          { status: 'passed', completedAt: '2026-07-01T14:00:00Z', durationH: 4 },
+          { status: 'passed', completedAt: '2026-07-02T10:00:00Z', durationH: 3.5 },
+          { status: 'passed', completedAt: '2026-07-02T15:00:00Z', durationH: 2.5 },
+          { status: 'passed', completedAt: '2026-07-05T11:00:00Z', durationH: 5 }
+        ]
+      },
+      {
+        id: 'epsilon-corp',
+        name: 'Epsilon Corp',
+        scenario: 'UDS Package Quickstart',
+        cse: 'Alex B.',
+        steps: [
+          { status: 'active', startedAt: '2026-07-06T09:00:00Z' },
+          { status: 'pending' },
+          { status: 'pending' },
+          { status: 'pending' },
+          { status: 'pending' }
+        ]
+      }
+    ];
+
+    function fmtH(h) {
+      if (h < 1)  return Math.round(h * 60) + 'm';
+      if (h < 24) return Math.round(h) + 'h';
+      const d = Math.floor(h / 24);
+      const r = Math.round(h % 24);
+      return r > 0 ? d + 'd ' + r + 'h' : d + 'd';
+    }
+
+    function hoursSince(iso) {
+      return (Date.now() - new Date(iso).getTime()) / 3600000;
+    }
+
+    function fmtAgo(iso) {
+      const h = hoursSince(iso);
+      if (h < 1)   return 'just now';
+      if (h < 24)  return Math.round(h) + 'h ago';
+      const d = Math.floor(h / 24);
+      return d === 1 ? 'yesterday' : d + 'd ago';
+    }
+
+    function fmtDate(iso) {
+      return new Date(iso).toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+    }
+
+    function summary(c) {
+      if (c.steps.every(s => s.status === 'passed')) {
+        return { type: 'graduated', label: 'Graduated', css: 'badge-graduated' };
+      }
+      const fi = c.steps.findIndex(s => s.status === 'failed');
+      if (fi !== -1) {
+        const h = hoursSince(c.steps[fi].failedAt);
+        return { type: 'failed', label: 'Failed on step ' + (fi + 1) + ' · ' + fmtH(h), css: 'badge-failed' };
+      }
+      const ai = c.steps.findIndex(s => s.status === 'active');
+      if (ai !== -1) {
+        const h = hoursSince(c.steps[ai].startedAt);
+        if (h > 48) {
+          return { type: 'stuck', label: 'Stuck on step ' + (ai + 1) + ' · ' + fmtH(h), css: 'badge-stuck' };
+        }
+        return { type: 'active', label: 'Step ' + (ai + 1) + ' · ' + fmtH(h), css: 'badge-active' };
+      }
+      return { type: 'pending', label: 'Not started', css: 'badge-active' };
+    }
+
+    function rowClass(c) {
+      const s = summary(c);
+      if (s.type === 'graduated') return 'row-success';
+      if (s.type === 'failed')    return 'row-danger';
+      if (s.type === 'stuck')     return 'row-warn';
+      return '';
+    }
+
+    function lastActive(c) {
+      const ts = c.steps
+        .map(s => s.completedAt || s.failedAt || s.startedAt)
+        .filter(Boolean);
+      if (!ts.length) return null;
+      return ts.reduce((a, b) => new Date(a) > new Date(b) ? a : b);
+    }
+
+    function stepCellHTML(s, i) {
+      if (s.status === 'passed') {
+        return '<td class="step-cell cell-passed" title="Completed in ' + fmtH(s.durationH) + '">'
+          + '<div class="cell-inner"><span class="cell-icon">&#x2713;</span><span class="cell-dur">' + fmtH(s.durationH) + '</span></div></td>';
+      }
+      if (s.status === 'failed') {
+        const h = hoursSince(s.failedAt);
+        return '<td class="step-cell cell-failed" title="' + s.reason + '">'
+          + '<div class="cell-inner"><span class="cell-icon">&#x2717;</span><span class="cell-dur">' + fmtH(h) + '</span></div></td>';
+      }
+      if (s.status === 'active') {
+        const h = hoursSince(s.startedAt);
+        const cls = h > 48 ? 'cell-active cell-stuck' : 'cell-active';
+        return '<td class="step-cell ' + cls + '" title="' + fmtH(h) + ' on this step">'
+          + '<div class="cell-inner"><span class="cell-dur">' + fmtH(h) + '</span></div></td>';
+      }
+      return '<td class="step-cell cell-pending"><div class="cell-inner"><span class="cell-icon">&ndash;</span></div></td>';
+    }
+
+    function buildSummary() {
+      let graduated = 0, active = 0, stuck = 0, failed = 0;
+      CUSTOMERS.forEach(c => {
+        const s = summary(c);
+        if (s.type === 'graduated') graduated++;
+        else if (s.type === 'failed') failed++;
+        else if (s.type === 'stuck') stuck++;
+        else active++;
+      });
+      document.getElementById('summary-bar').innerHTML = [
+        { v: CUSTOMERS.length, l: 'Customers',    cls: '' },
+        { v: graduated,        l: 'Graduated',    cls: graduated > 0 ? 'card-success' : '' },
+        { v: active,           l: 'In Progress',  cls: '' },
+        { v: stuck,            l: 'Stuck (>48h)', cls: stuck   > 0 ? 'card-warn'    : '' },
+        { v: failed,           l: 'Failed',       cls: failed  > 0 ? 'card-danger'  : '' }
+      ].map(c =>
+        '<div class="summary-card ' + c.cls + '">'
+        + '<span class="card-value">' + c.v + '</span>'
+        + '<span class="card-label">' + c.l + '</span>'
+        + '</div>'
+      ).join('');
+    }
+
+    let selectedRow = null;
+
+    function buildTable() {
+      const tbody = document.getElementById('csm-tbody');
+      CUSTOMERS.forEach((c, i) => {
+        const s = summary(c);
+        const rc = rowClass(c);
+        const la = lastActive(c);
+        const cells = c.steps.map((step, si) => stepCellHTML(step, si)).join('');
+
+        const tr = document.createElement('tr');
+        tr.dataset.idx = i;
+        if (rc) tr.classList.add(rc);
+        tr.innerHTML =
+          '<td><div class="customer-name">' + c.name + '</div>'
+            + '<div class="customer-scenario">' + c.scenario + '</div></td>'
+          + '<td style="font-size:12px;white-space:nowrap">' + c.cse + '</td>'
+          + cells
+          + '<td><span class="status-badge ' + s.css + '">' + s.label + '</span></td>'
+          + '<td class="time-muted">' + (la ? fmtAgo(la) : '&mdash;') + '</td>';
+        tr.addEventListener('click', () => openDrill(i, tr));
+        tbody.appendChild(tr);
+      });
+    }
+
+    function openDrill(idx, row) {
+      if (selectedRow === row) {
+        selectedRow.classList.remove('selected');
+        selectedRow = null;
+        document.getElementById('drill-panel').classList.remove('open');
+        return;
+      }
+      if (selectedRow) selectedRow.classList.remove('selected');
+      selectedRow = row;
+      row.classList.add('selected');
+
+      const c = CUSTOMERS[idx];
+      const s = summary(c);
+      const panel = document.getElementById('drill-panel');
+
+      const stepsHTML = c.steps.map((step, i) => {
+        let icon, detail, error = '';
+        if (step.status === 'passed') {
+          icon = '<span style="color:var(--success)">&#x2713;</span>';
+          detail = 'Completed in ' + fmtH(step.durationH) + ' &mdash; ' + fmtDate(step.completedAt);
+        } else if (step.status === 'failed') {
+          icon = '<span style="color:var(--danger)">&#x2717;</span>';
+          detail = 'Failed ' + fmtAgo(step.failedAt);
+          error = '<div class="drill-step-error">' + step.reason + '</div>';
+        } else if (step.status === 'active') {
+          const h = hoursSince(step.startedAt);
+          const col = h > 48 ? 'var(--danger)' : 'var(--warn)';
+          icon = '<span style="color:' + col + '">&#x23F3;</span>';
+          detail = 'In progress &middot; ' + fmtH(h) + ' &middot; started ' + fmtDate(step.startedAt);
+        } else {
+          icon = '<span style="color:var(--border)">&#x00B7;</span>';
+          detail = 'Not reached';
+        }
+        return '<div class="drill-step">'
+          + '<div class="drill-step-icon">' + icon + '</div>'
+          + '<div class="drill-step-content">'
+            + '<div class="drill-step-name">' + (i + 1) + '. ' + STEP_NAMES[i] + '</div>'
+            + '<div class="drill-step-detail">' + detail + '</div>'
+            + error
+          + '</div></div>';
+      }).join('');
+
+      panel.innerHTML =
+        '<div class="drill-header">'
+          + '<div><div class="drill-title">' + c.name + '</div>'
+          + '<div class="drill-subtitle">' + c.scenario + '</div></div>'
+          + '<button class="drill-close" onclick="closeDrill()">&#x00D7;</button>'
+        + '</div>'
+        + '<div class="drill-body">'
+          + '<div class="drill-meta">'
+            + '<div class="drill-meta-row"><span class="drill-meta-label">CSE</span><span>' + c.cse + '</span></div>'
+            + '<div class="drill-meta-row"><span class="drill-meta-label">Status</span><span class="status-badge ' + s.css + '">' + s.label + '</span></div>'
+          + '</div>'
+          + '<div class="drill-steps-label">Step Timeline</div>'
+          + stepsHTML
+        + '</div>';
+
+      panel.classList.add('open');
+    }
+
+    function closeDrill() {
+      if (selectedRow) { selectedRow.classList.remove('selected'); selectedRow = null; }
+      document.getElementById('drill-panel').classList.remove('open');
+    }
+
+    buildSummary();
+    buildTable();
+  </script>
+</body>
+</html>
