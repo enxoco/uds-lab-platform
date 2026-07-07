@@ -296,11 +296,11 @@
   </nav>
 
   <div class="csm-wrap">
-    <div class="seed-banner">
+    <div id="error-banner" class="seed-banner" style="display:none">
       <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor" style="flex-shrink:0">
         <path d="M8 .5a.5.5 0 0 1 .448.276l7.5 14A.5.5 0 0 1 15.5 15.5h-15a.5.5 0 0 1-.448-.724l7.5-14A.5.5 0 0 1 8 .5zM8 5a.5.5 0 0 0-.5.5v4a.5.5 0 0 0 1 0v-4A.5.5 0 0 0 8 5zm0 8.5a.75.75 0 1 0 0-1.5.75.75 0 0 0 0 1.5z"/>
       </svg>
-      <span><strong>Seed data</strong> — Realistic but hardcoded. Wire to live <code>step_events</code> in Week 4.</span>
+      <span id="error-text"></span>
     </div>
 
     <div class="summary-bar" id="summary-bar"></div>
@@ -309,14 +309,14 @@
       <div class="table-wrap">
         <table class="csm-table">
           <thead>
-            <tr>
+            <tr id="step-header-row">
               <th style="text-align:left">Customer</th>
               <th style="text-align:left">CSE</th>
-              <th title="Install prerequisites">Step 1</th>
-              <th title="Deploy UDS Core">Step 2</th>
-              <th title="Write zarf.yaml">Step 3</th>
-              <th title="Write UDS Package CR">Step 4</th>
-              <th title="Build, deploy, verify">Step 5</th>
+              <th>Step 1</th>
+              <th>Step 2</th>
+              <th>Step 3</th>
+              <th>Step 4</th>
+              <th>Step 5</th>
               <th style="text-align:left">Status</th>
               <th style="text-align:left">Last Active</th>
             </tr>
@@ -329,81 +329,8 @@
   </div>
 
   <script>
-    const STEP_NAMES = [
-      'Install prerequisites',
-      'Deploy UDS Core',
-      'Write zarf.yaml',
-      'UDS Package CR',
-      'Build, deploy, verify'
-    ];
-
-    const CUSTOMERS = [
-      {
-        id: 'gamma-federal',
-        name: 'Gamma Federal',
-        scenario: 'UDS Package Quickstart',
-        cse: 'Sam K.',
-        steps: [
-          { status: 'passed', completedAt: '2026-06-28T10:00:00Z', durationH: 2 },
-          { status: 'failed',  failedAt:   '2026-06-29T14:00:00Z', durationH: 168, reason: 'k3d cluster startup failure: insufficient disk space on host VM' },
-          { status: 'pending' },
-          { status: 'pending' },
-          { status: 'pending' }
-        ]
-      },
-      {
-        id: 'alpha-industries',
-        name: 'Alpha Industries',
-        scenario: 'UDS Package Quickstart',
-        cse: 'Jordan M.',
-        steps: [
-          { status: 'passed', completedAt: '2026-07-04T10:00:00Z', durationH: 2 },
-          { status: 'passed', completedAt: '2026-07-04T15:00:00Z', durationH: 5 },
-          { status: 'active', startedAt:   '2026-07-04T16:00:00Z' },
-          { status: 'pending' },
-          { status: 'pending' }
-        ]
-      },
-      {
-        id: 'beta-systems',
-        name: 'Beta Systems',
-        scenario: 'UDS Package Quickstart',
-        cse: 'Taylor R.',
-        steps: [
-          { status: 'passed', completedAt: '2026-07-03T11:00:00Z', durationH: 1.5 },
-          { status: 'passed', completedAt: '2026-07-03T15:00:00Z', durationH: 3 },
-          { status: 'passed', completedAt: '2026-07-04T10:00:00Z', durationH: 2 },
-          { status: 'passed', completedAt: '2026-07-04T13:00:00Z', durationH: 1.5 },
-          { status: 'active', startedAt:   '2026-07-06T10:00:00Z' }
-        ]
-      },
-      {
-        id: 'delta-aerospace',
-        name: 'Delta Aerospace',
-        scenario: 'UDS Package Quickstart',
-        cse: 'Jordan M.',
-        steps: [
-          { status: 'passed', completedAt: '2026-07-01T09:00:00Z', durationH: 1.5 },
-          { status: 'passed', completedAt: '2026-07-01T14:00:00Z', durationH: 4 },
-          { status: 'passed', completedAt: '2026-07-02T10:00:00Z', durationH: 3.5 },
-          { status: 'passed', completedAt: '2026-07-02T15:00:00Z', durationH: 2.5 },
-          { status: 'passed', completedAt: '2026-07-05T11:00:00Z', durationH: 5 }
-        ]
-      },
-      {
-        id: 'epsilon-corp',
-        name: 'Epsilon Corp',
-        scenario: 'UDS Package Quickstart',
-        cse: 'Alex B.',
-        steps: [
-          { status: 'active', startedAt: '2026-07-06T09:00:00Z' },
-          { status: 'pending' },
-          { status: 'pending' },
-          { status: 'pending' },
-          { status: 'pending' }
-        ]
-      }
-    ];
+    let STEP_NAMES = [];
+    let CUSTOMERS = [];
 
     function fmtH(h) {
       if (h < 1)  return Math.round(h * 60) + 'm';
@@ -599,8 +526,49 @@
       document.getElementById('drill-panel').classList.remove('open');
     }
 
-    buildSummary();
-    buildTable();
+    async function init() {
+      try {
+        const res = await fetch('/api/admin/csm');
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const data = await res.json();
+
+        CUSTOMERS = data.map(c => ({
+          id:       c.id,
+          name:     c.name,
+          scenario: c.scenario,
+          cse:      c.cse || '',
+          steps:    c.steps
+        }));
+
+        if (data.length > 0 && data[0].step_titles) {
+          STEP_NAMES = data[0].step_titles;
+          // Rebuild step column headers now that we know the step names.
+          const headerRow = document.getElementById('step-header-row');
+          if (headerRow) {
+            const base = '<th style="text-align:left">Customer</th><th style="text-align:left">CSE</th>';
+            const stepCols = STEP_NAMES.map((n, i) =>
+              '<th title="' + n + '">Step ' + (i + 1) + '</th>'
+            ).join('');
+            headerRow.innerHTML = base + stepCols
+              + '<th style="text-align:left">Status</th>'
+              + '<th style="text-align:left">Last Active</th>';
+          }
+        }
+
+        if (CUSTOMERS.length === 0) {
+          document.getElementById('error-banner').style.display = 'flex';
+          document.getElementById('error-text').textContent = 'No sessions with user identity found. Sessions created before this release will not appear until users start new sessions.';
+        }
+      } catch (e) {
+        document.getElementById('error-banner').style.display = 'flex';
+        document.getElementById('error-text').textContent = 'Failed to load CSM data: ' + e.message;
+      }
+
+      buildSummary();
+      buildTable();
+    }
+
+    init();
   </script>
 </body>
 </html>

@@ -41,7 +41,7 @@ func NewManager(k8s client.Client, namespace string, ttl time.Duration, scenario
 
 // Create enforces one active session per clientID (TOCTOU-safe via LIST then
 // CREATE), reads scenario metadata, and creates the LabSession CR.
-func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, clientID, scenarioID, userEmail string) (*Session, error) {
 	// Reject if a non-terminal session already exists for this client.
 	existing := &labv1.LabSessionList{}
 	if err := m.client.List(ctx, existing,
@@ -79,6 +79,7 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Ses
 			SessionID:      id,
 			ScenarioID:     scenarioID,
 			ClientID:       clientID,
+			UserEmail:      userEmail,
 			Size:           string(sz),
 			BrowserEnabled: sc.Browser,
 			ExpiresAt:      metav1.NewTime(expiresAt),
@@ -91,12 +92,31 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID string) (*Ses
 	return &Session{
 		ID:             id,
 		Scenario:       scenarioID,
+		UserEmail:      userEmail,
 		ClientID:       clientID,
 		Status:         StatusProvisioning,
 		BrowserEnabled: sc.Browser,
 		CreatedAt:      now,
 		ExpiresAt:      expiresAt,
 	}, nil
+}
+
+// MarkStepComplete appends step to the session's CompletedSteps if not already
+// present. The step identifier is whatever string the client sent as the {step}
+// path parameter in the verify request.
+func (m *Manager) MarkStepComplete(ctx context.Context, id, step string) error {
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
+		return fmt.Errorf("get session %q: %w", id, err)
+	}
+	for _, s := range ls.Status.CompletedSteps {
+		if s == step {
+			return nil
+		}
+	}
+	patch := client.MergeFrom(ls.DeepCopy())
+	ls.Status.CompletedSteps = append(ls.Status.CompletedSteps, step)
+	return m.client.Status().Patch(ctx, ls, patch)
 }
 
 // All returns all LabSessions in the manager's namespace.
@@ -144,11 +164,13 @@ func lsToSession(ls *labv1.LabSession) *Session {
 	return &Session{
 		ID:             ls.Spec.SessionID,
 		Scenario:       ls.Spec.ScenarioID,
+		UserEmail:      ls.Spec.UserEmail,
 		ClientID:       ls.Spec.ClientID,
 		ServiceDNS:     ls.Status.ServiceDNS,
 		Status:         status,
 		BrowserEnabled: ls.Spec.BrowserEnabled,
 		CreatedAt:      ls.CreationTimestamp.Time,
 		ExpiresAt:      ls.Spec.ExpiresAt.Time,
+		CompletedSteps: ls.Status.CompletedSteps,
 	}
 }
