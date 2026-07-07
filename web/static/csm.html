@@ -450,7 +450,9 @@
         tr.dataset.idx = i;
         if (rc) tr.classList.add(rc);
         tr.innerHTML =
-          '<td><div class="customer-name">' + c.name + '</div>'
+          '<td><div class="customer-name">' + c.name
+              + (c.userCount > 1 ? ' <span style="font-size:11px;color:var(--text-muted);font-weight:400;">' + c.userCount + ' users</span>' : '')
+              + '</div>'
             + '<div class="customer-scenario">' + c.scenario + '</div></td>'
           + '<td style="font-size:12px;white-space:nowrap">' + c.cse + '</td>'
           + cells
@@ -514,6 +516,18 @@
             + '<div class="drill-meta-row"><span class="drill-meta-label">CSE</span><span>' + c.cse + '</span></div>'
             + '<div class="drill-meta-row"><span class="drill-meta-label">Status</span><span class="status-badge ' + s.css + '">' + s.label + '</span></div>'
           + '</div>'
+          + (c.users && c.users.length > 1
+              ? '<div class="drill-steps-label">Users (' + c.users.length + ')</div>'
+                + '<div style="display:flex;flex-direction:column;gap:6px;margin-bottom:16px;">'
+                + c.users.map(u =>
+                    '<div style="display:flex;align-items:center;gap:8px;font-size:12px;">'
+                    + '<span style="color:' + (u.active ? 'var(--success)' : 'var(--text-muted)') + ';font-size:8px;">&#x25CF;</span>'
+                    + '<span style="flex:1;font-family:var(--mono)">' + u.email + '</span>'
+                    + '<span style="color:var(--text-muted)">' + u.completed + ' step' + (u.completed !== 1 ? 's' : '') + '</span>'
+                    + '</div>'
+                  ).join('')
+                + '</div>'
+              : '')
           + '<div class="drill-steps-label">Step Timeline</div>'
           + stepsHTML
         + '</div>';
@@ -533,11 +547,13 @@
         const data = await res.json();
 
         CUSTOMERS = data.map(c => ({
-          id:       c.id,
-          name:     c.name,
-          scenario: c.scenario,
-          cse:      c.cse || '',
-          steps:    c.steps
+          id:        c.id,
+          name:      c.name,
+          scenario:  c.scenario,
+          cse:       c.cse || '',
+          userCount: c.user_count || 1,
+          users:     c.users || [],
+          steps:     c.steps
         }));
 
         if (data.length > 0 && data[0].step_titles) {

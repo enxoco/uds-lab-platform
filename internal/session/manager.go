@@ -147,6 +147,25 @@ func (m *Manager) Get(id string) (*Session, bool) {
 	return lsToSession(ls), true
 }
 
+// GetActive returns the first non-expired session for the given clientID, or
+// (nil, false) if none exists. Used by the "resume session" flow on the catalog.
+func (m *Manager) GetActive(ctx context.Context, clientID string) (*Session, bool) {
+	list := &labv1.LabSessionList{}
+	if err := m.client.List(ctx, list,
+		client.InNamespace(m.namespace),
+		client.MatchingLabels{"lab.uds.dev/client": clientID},
+	); err != nil {
+		return nil, false
+	}
+	for i := range list.Items {
+		s := lsToSession(&list.Items[i])
+		if s.Status != StatusExpired {
+			return s, true
+		}
+	}
+	return nil, false
+}
+
 // Delete deletes the LabSession CR. Owner references cascade to VMI/Service/NP.
 func (m *Manager) Delete(ctx context.Context, id string) error {
 	ls := &labv1.LabSession{}
