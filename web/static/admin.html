@@ -114,7 +114,7 @@
 
       const rows = sessions.map(s => `
         <tr>
-          <td class="gh">@${esc(s.github_user || '—')}</td>
+          <td class="gh">${esc(s.user_email || '—')}</td>
           <td>${esc(s.scenario)}</td>
           <td><span class="status-${esc(s.status)}">${esc(s.status)}</span></td>
           <td class="ttl">${esc(s.vm_ip || '—')}</td>
@@ -126,7 +126,7 @@
       document.getElementById('content').innerHTML = `
         <table>
           <thead><tr>
-            <th>GitHub User</th>
+            <th>User</th>
             <th>Scenario</th>
             <th>Status</th>
             <th>VM IP</th>

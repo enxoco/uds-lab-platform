@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -137,19 +139,19 @@ func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {
 	all := s.mgr.All()
 
 	type adminSession struct {
-		SessionID string    `json:"session_id"`
-		ClientID  string    `json:"client_id"`
-		Scenario  string    `json:"scenario"`
-		ServiceDNS string   `json:"service_dns"`
-		Status    string    `json:"status"`
-		ExpiresAt time.Time `json:"expires_at"`
+		SessionID  string    `json:"session_id"`
+		UserEmail  string    `json:"user_email"`
+		Scenario   string    `json:"scenario"`
+		ServiceDNS string    `json:"service_dns"`
+		Status     string    `json:"status"`
+		ExpiresAt  time.Time `json:"expires_at"`
 	}
 
 	result := make([]adminSession, 0, len(all))
 	for _, sess := range all {
 		result = append(result, adminSession{
 			SessionID:  sess.ID,
-			ClientID:   sess.ClientID,
+			UserEmail:  sess.UserEmail,
 			Scenario:   sess.Scenario,
 			ServiceDNS: sess.ServiceDNS,
 			Status:     string(sess.Status),
@@ -587,12 +589,26 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// ownsSession checks whether the requesting user owns the session.
+// In production, authservice injects X-Auth-Request-Email and we compare it
+// against the email recorded at session create time. In dev (no authservice),
+// we fall back to the UUID cookie so local testing still works.
 func ownsSession(r *http.Request, sess *session.Session) bool {
+	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+		return strings.EqualFold(email, sess.UserEmail)
+	}
 	c, err := r.Cookie("lab_client_id")
 	return err == nil && c.Value != "" && c.Value == sess.ClientID
 }
 
+// clientID returns a stable client identifier for the requesting user.
+// In production, we derive a deterministic label-safe key from the Keycloak
+// email so that one user always maps to one client regardless of browser or
+// device. In dev (no authservice), we fall back to a UUID cookie.
 func clientID(w http.ResponseWriter, r *http.Request) string {
+	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+		return emailClientID(email)
+	}
 	const cookieName = "lab_client_id"
 	if c, err := r.Cookie(cookieName); err == nil && c.Value != "" {
 		return c.Value
@@ -607,6 +623,13 @@ func clientID(w http.ResponseWriter, r *http.Request) string {
 		SameSite: http.SameSiteLaxMode,
 	})
 	return id
+}
+
+// emailClientID derives a Kubernetes label-safe client key from an email.
+// Uses the first 32 hex chars of SHA-256(lower(email)).
+func emailClientID(email string) string {
+	h := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(h[:16])
 }
 
 func envOr(key, def string) string {
