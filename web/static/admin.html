@@ -117,7 +117,7 @@
           <td class="gh">${esc(s.user_email || '—')}</td>
           <td>${esc(s.scenario)}</td>
           <td><span class="status-${esc(s.status)}">${esc(s.status)}</span></td>
-          <td class="ttl">${esc(s.vm_ip || '—')}</td>
+          <td class="ttl">${esc(s.service_dns || '—')}</td>
           <td class="ttl">${fmtTTL(s.expires_at)}</td>
           <td><button class="btn-kill" onclick="terminate('${esc(s.session_id)}', this)">Terminate</button></td>
         </tr>
@@ -129,7 +129,7 @@
             <th>User</th>
             <th>Scenario</th>
             <th>Status</th>
-            <th>VM IP</th>
+            <th>Service DNS</th>
             <th>Time Left</th>
             <th></th>
           </tr></thead>

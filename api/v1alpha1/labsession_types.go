@@ -58,10 +58,16 @@ type LabSessionStatus struct {
 	ServiceDNS string `json:"serviceDNS,omitempty"`
 	// Message carries human-readable detail, especially for Failed.
 	Message string `json:"message,omitempty"`
-	// CompletedSteps lists the step identifiers that have passed verification,
-	// in the order they were completed. Written by the lab server after each
-	// successful /verify call; read by the CSM dashboard.
-	CompletedSteps []string `json:"completedSteps,omitempty"`
+	// CompletedSteps records each step that has passed verification, in order.
+	// Written by the lab server after each successful /verify call; read by
+	// the CSM dashboard to show per-step durations.
+	CompletedSteps []StepRecord `json:"completedSteps,omitempty"`
+}
+
+// StepRecord captures a single verified step and the time it passed.
+type StepRecord struct {
+	Step        string      `json:"step"`
+	CompletedAt metav1.Time `json:"completedAt"`
 }
 
 // +kubebuilder:object:root=true

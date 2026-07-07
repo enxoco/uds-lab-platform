@@ -101,21 +101,24 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID, userEmail st
 	}, nil
 }
 
-// MarkStepComplete appends step to the session's CompletedSteps if not already
-// present. The step identifier is whatever string the client sent as the {step}
-// path parameter in the verify request.
+// MarkStepComplete appends a StepRecord to the session's CompletedSteps if the
+// step is not already recorded. Records the current time as CompletedAt so the
+// CSM dashboard can show real per-step durations.
 func (m *Manager) MarkStepComplete(ctx context.Context, id, step string) error {
 	ls := &labv1.LabSession{}
 	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
 		return fmt.Errorf("get session %q: %w", id, err)
 	}
 	for _, s := range ls.Status.CompletedSteps {
-		if s == step {
+		if s.Step == step {
 			return nil
 		}
 	}
 	patch := client.MergeFrom(ls.DeepCopy())
-	ls.Status.CompletedSteps = append(ls.Status.CompletedSteps, step)
+	ls.Status.CompletedSteps = append(ls.Status.CompletedSteps, labv1.StepRecord{
+		Step:        step,
+		CompletedAt: metav1.Now(),
+	})
 	return m.client.Status().Patch(ctx, ls, patch)
 }
 
@@ -153,6 +156,17 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	return m.client.Delete(ctx, ls)
 }
 
+func lsStepRecords(in []labv1.StepRecord) []StepRecord {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]StepRecord, len(in))
+	for i, r := range in {
+		out[i] = StepRecord{Step: r.Step, CompletedAt: r.CompletedAt.Time}
+	}
+	return out
+}
+
 func lsToSession(ls *labv1.LabSession) *Session {
 	status := StatusProvisioning
 	switch ls.Status.Phase {
@@ -171,6 +185,6 @@ func lsToSession(ls *labv1.LabSession) *Session {
 		BrowserEnabled: ls.Spec.BrowserEnabled,
 		CreatedAt:      ls.CreationTimestamp.Time,
 		ExpiresAt:      ls.Spec.ExpiresAt.Time,
-		CompletedSteps: ls.Status.CompletedSteps,
+		CompletedSteps: lsStepRecords(ls.Status.CompletedSteps),
 	}
 }

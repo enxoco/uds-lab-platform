@@ -1,0 +1,8 @@
+# Maps email domains to customer display names and assigned CSEs.
+# Add an entry here when onboarding a new customer org.
+#
+# Example:
+#   acme.com:
+#     display_name: ACME Corp
+#     cse: Jordan M.
+customers: {}
