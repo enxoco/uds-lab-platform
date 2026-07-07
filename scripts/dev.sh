@@ -14,11 +14,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # ── Parse args ────────────────────────────────────────────────────────────────
-SKIP_IMAGES=0
-SKIP_WIPE=0
-SKIP_BASE=0
-SKIP_TOOLS=0
-SKIP_UDS_CORE=0
+SKIP_IMAGES="${SKIP_IMAGES:-0}"
+SKIP_WIPE="${SKIP_WIPE:-0}"
+SKIP_BASE="${SKIP_BASE:-0}"
+SKIP_TOOLS="${SKIP_TOOLS:-0}"
+SKIP_UDS_CORE="${SKIP_UDS_CORE:-0}"
 
 parse_kv() {
   local key="${1%%=*}" val="${1#*=}"
@@ -93,13 +93,13 @@ UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
 echo "▶ Patching CoreDNS..."
 ./scripts/patch-coredns.sh
 
-# ── Keycloak test user ────────────────────────────────────────────────────────
-echo "▶ Creating Keycloak test user..."
-uds run uds-setup:keycloak-user --with group="/UDS Core/Admin"
-
 # ── nginx proxy ───────────────────────────────────────────────────────────────
 echo "▶ Starting nginx proxy..."
 ./scripts/start-proxy.sh
+
+# ── Keycloak test user ────────────────────────────────────────────────────────
+echo "▶ Creating Keycloak test user..."
+uds run uds-setup:keycloak-user --with group="/UDS Core/Admin" || echo "⚠ Keycloak user creation failed — user may already exist or Keycloak may still be starting"
 
 echo ""
 echo "╔══════════════════════════════════════════════════════════╗"
