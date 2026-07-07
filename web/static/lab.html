@@ -22,6 +22,19 @@
     <div style="color:var(--text);font-size:14px;">Tearing down lab environment…</div>
   </div>
 
+  <!-- Completion overlay -->
+  <div id="completion-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.85);z-index:100;align-items:center;justify-content:center;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:36px;max-width:400px;width:90%;display:flex;flex-direction:column;gap:16px;text-align:center;">
+      <div style="font-size:40px;line-height:1;">&#x2713;</div>
+      <div style="font-weight:600;font-size:20px;">Lab Complete</div>
+      <div style="color:var(--text-muted);font-size:13px;">You finished all the steps. The VM will be torn down when you leave.</div>
+      <div style="display:flex;gap:8px;justify-content:center;margin-top:8px;">
+        <button class="btn btn-ghost" onclick="document.getElementById('completion-overlay').style.display='none'">Keep exploring</button>
+        <button class="btn btn-primary" onclick="endLab()">Exit lab</button>
+      </div>
+    </div>
+  </div>
+
   <!-- Confirm dialog -->
   <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100;align-items:center;justify-content:center;">
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:360px;width:90%;display:flex;flex-direction:column;gap:16px;">
@@ -421,7 +434,7 @@
       try {
         const res = await fetch(`/api/sessions/${SESSION}/verify/${currentStep + 1}`, { method: 'POST' });
         const data = await res.json();
-        if (data.pass) {
+        if (data.passed) {
           stepVerified[currentStep] = true;
           btn.textContent = '✓ Passed';
           btn.className = 'btn btn-check-pass';
@@ -443,7 +456,10 @@
 
     function prevStep() { showStep(currentStep - 1); }
     function nextStep() {
-      if (currentStep === steps.length - 1) { confirmEnd(); return; }
+      if (currentStep === steps.length - 1) {
+        document.getElementById('completion-overlay').style.display = 'flex';
+        return;
+      }
       showStep(currentStep + 1);
     }
 

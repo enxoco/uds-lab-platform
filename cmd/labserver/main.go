@@ -106,6 +106,7 @@ func main() {
 	mux.HandleFunc("GET /api/scenarios", srv.listScenarios)
 	mux.HandleFunc("GET /api/scenarios/{id}", srv.getScenario)
 	mux.HandleFunc("POST /api/sessions", srv.createSession)
+	mux.HandleFunc("GET /api/sessions/me", srv.getMySession)
 	mux.HandleFunc("GET /api/sessions/{id}", srv.getSession)
 	mux.HandleFunc("DELETE /api/sessions/{id}", srv.deleteSession)
 	mux.HandleFunc("POST /t/{id}/cmd", srv.injectCmd)
@@ -185,23 +186,36 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 		CompletedAt *time.Time `json:"completedAt,omitempty"`
 		DurationH   float64    `json:"durationH,omitempty"`
 	}
+	type csmUser struct {
+		Email     string `json:"email"`
+		Completed int    `json:"completed"`
+		Active    bool   `json:"active"`
+	}
 	type csmCustomer struct {
-		ID         string    `json:"id"`
-		Name       string    `json:"name"`
-		Scenario   string    `json:"scenario"`
-		CSE        string    `json:"cse"`
-		StepTitles []string  `json:"step_titles"`
-		Steps      []csmStep `json:"steps"`
+		ID         string      `json:"id"`
+		Name       string      `json:"name"`
+		Scenario   string      `json:"scenario"`
+		CSE        string      `json:"cse"`
+		UserCount  int         `json:"user_count"`
+		Users      []csmUser   `json:"users"`
+		StepTitles []string    `json:"step_titles"`
+		Steps      []csmStep   `json:"steps"`
 	}
 
 	type groupKey struct{ domain, scenario string }
 	type group struct {
 		domain  string
 		best    *session.Session
+		users   []csmUser
 	}
 
+	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 	groups := map[groupKey]*group{}
 	for _, sess := range s.mgr.All() {
+		// Skip sessions that expired more than 30 days ago.
+		if sess.Status == session.StatusExpired && sess.ExpiresAt.Before(cutoff) {
+			continue
+		}
 		domain := emailDomain(sess.UserEmail)
 		if domain == "" {
 			continue
@@ -212,11 +226,17 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 			g = &group{domain: domain}
 			groups[k] = g
 		}
-		// Prefer: most completed steps; on tie, prefer active over expired.
+		isActive := sess.Status != session.StatusExpired
+		g.users = append(g.users, csmUser{
+			Email:     sess.UserEmail,
+			Completed: len(sess.CompletedSteps),
+			Active:    isActive,
+		})
+		// Best = most completed steps; tie-break: active beats expired.
 		if g.best == nil ||
 			len(sess.CompletedSteps) > len(g.best.CompletedSteps) ||
 			(len(sess.CompletedSteps) == len(g.best.CompletedSteps) &&
-				sess.Status != session.StatusExpired && g.best.Status == session.StatusExpired) {
+				isActive && g.best.Status == session.StatusExpired) {
 			g.best = sess
 		}
 	}
@@ -275,6 +295,8 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 			Name:       name,
 			Scenario:   sc.Title,
 			CSE:        info.CSE,
+			UserCount:  len(g.users),
+			Users:      g.users,
 			StepTitles: titles,
 			Steps:      steps,
 		})
@@ -360,6 +382,16 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(sess)
+}
+
+func (s *server) getMySession(w http.ResponseWriter, r *http.Request) {
+	cid := clientID(w, r)
+	sess, ok := s.mgr.GetActive(r.Context(), cid)
+	if !ok {
+		jsonError(w, "no active session", http.StatusNotFound)
+		return
+	}
+	jsonOK(w, sess)
 }
 
 func (s *server) getSession(w http.ResponseWriter, r *http.Request) {

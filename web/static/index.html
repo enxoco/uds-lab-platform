@@ -11,6 +11,12 @@
     <span class="logo">UDS Labs</span>
   </nav>
 
+  <div id="resume-banner" style="display:none;background:rgba(88,166,255,0.08);border-bottom:1px solid rgba(88,166,255,0.2);padding:12px 24px;display:none;align-items:center;gap:12px;font-size:13px;">
+    <span style="color:var(--text-muted)">You have an active lab session.</span>
+    <a id="resume-link" href="#" style="color:var(--accent);font-weight:600;">Resume Lab →</a>
+    <button onclick="dismissResume()" style="margin-left:auto;background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:16px;line-height:1;">×</button>
+  </div>
+
   <div class="catalog">
     <h1>Interactive Labs</h1>
     <p class="subtitle">Hands-on UDS and Zarf exercises in a live browser environment — no installs required.</p>
@@ -58,14 +64,34 @@
             ${s.difficulty ? `<span class="tag">${esc(s.difficulty)}</span>` : ''}
           </div>
         `;
-        card.addEventListener('click', () => startLab(s.id));
+        card.addEventListener('click', (e) => startLab(s.id, e.currentTarget));
         grid.appendChild(card);
       });
     }
 
-    async function startLab(scenarioId) {
-      const btn = event.currentTarget.querySelector('h2');
-      btn.textContent = 'Starting…';
+    let activeSession = null;
+
+    async function checkActiveSession() {
+      try {
+        const res = await fetch('/api/sessions/me');
+        if (res.ok) {
+          activeSession = await res.json();
+          const banner = document.getElementById('resume-banner');
+          document.getElementById('resume-link').href =
+            `/lab.html?session=${activeSession.id}&scenario=${activeSession.scenario}`;
+          banner.style.display = 'flex';
+        }
+      } catch {}
+    }
+
+    function dismissResume() {
+      document.getElementById('resume-banner').style.display = 'none';
+    }
+
+    async function startLab(scenarioId, cardEl) {
+      const h2 = cardEl.querySelector('h2');
+      const orig = h2.textContent;
+      h2.textContent = 'Starting…';
 
       try {
         const res = await fetch('/api/sessions', {
@@ -73,17 +99,17 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ scenario: scenarioId }),
         });
-        if (res.status === 409) {
-          alert('You already have an active lab session. End it before starting a new one.');
-          load();
+        if (res.status === 409 && activeSession) {
+          window.location.href =
+            `/lab.html?session=${activeSession.id}&scenario=${activeSession.scenario}`;
           return;
         }
         if (!res.ok) throw new Error(await res.text());
         const session = await res.json();
         window.location.href = `/lab.html?session=${session.id}&scenario=${scenarioId}`;
       } catch (e) {
+        h2.textContent = orig;
         alert('Failed to start lab: ' + e.message);
-        load();
       }
     }
 
@@ -92,6 +118,7 @@
     }
 
     load();
+    checkActiveSession();
   </script>
 </body>
 </html>
