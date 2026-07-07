@@ -34,6 +34,9 @@ type LabSessionSpec struct {
 	// ClientID binds the session to a browser Client (ADR-0002). The server
 	// enforces one active session per Client by listing CRs on this field.
 	ClientID string `json:"clientID"`
+	// UserEmail is the Keycloak email of the authenticated user who created the
+	// session. Used to group sessions by customer org in the CSM dashboard.
+	UserEmail string `json:"userEmail,omitempty"`
 	// Size is the abstract resource tier (small|medium|large, ADR-0013). Empty
 	// means the operator's configured default.
 	Size string `json:"size,omitempty"`
@@ -55,6 +58,10 @@ type LabSessionStatus struct {
 	ServiceDNS string `json:"serviceDNS,omitempty"`
 	// Message carries human-readable detail, especially for Failed.
 	Message string `json:"message,omitempty"`
+	// CompletedSteps lists the step identifiers that have passed verification,
+	// in the order they were completed. Written by the lab server after each
+	// successful /verify call; read by the CSM dashboard.
+	CompletedSteps []string `json:"completedSteps,omitempty"`
 }
 
 // +kubebuilder:object:root=true

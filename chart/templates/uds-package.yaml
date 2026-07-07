@@ -14,10 +14,12 @@ spec:
         app: lab-platform
   network:
     allow:
-      # egress to Hetzner Cloud API
       - direction: Egress
-        remoteGenerated: Anywhere
-        description: Hetzner Cloud API and VM egress
+        remoteNamespace: {{ .Values.vmNamespace }}
+        description: Proxy to lab VM services
+      - direction: Egress
+        remoteGenerated: KubeAPI
+        description: Kubernetes API server
     expose:
       - service: lab-platform
         selector:

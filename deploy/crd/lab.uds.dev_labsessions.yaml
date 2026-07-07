@@ -43,6 +43,8 @@ spec:
                   type: string
                 clientID:
                   type: string
+                userEmail:
+                  type: string
                 size:
                   type: string
                   enum: [small, medium, large]
@@ -61,3 +63,7 @@ spec:
                   type: string
                 message:
                   type: string
+                completedSteps:
+                  type: array
+                  items:
+                    type: string

@@ -9,7 +9,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	labplatform "github.com/enxoco/uds-lab-platform"
@@ -109,7 +111,9 @@ func main() {
 	// Admin routes
 	mux.HandleFunc("GET /api/admin/sessions", srv.adminListSessions)
 	mux.HandleFunc("DELETE /api/admin/sessions/{id}", srv.adminDeleteSession)
+	mux.HandleFunc("GET /api/admin/csm", srv.adminCSM)
 	mux.HandleFunc("GET /admin", srv.adminPage)
+	mux.HandleFunc("GET /admin/csm", srv.csmDashboard)
 
 	// Static file server (catch-all)
 	mux.Handle("/", http.FileServerFS(staticFS))
@@ -123,6 +127,10 @@ func main() {
 
 func (s *server) adminPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, s.staticFS, "admin.html")
+}
+
+func (s *server) csmDashboard(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, s.staticFS, "csm.html")
 }
 
 func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {
@@ -160,6 +168,101 @@ func (s *server) adminDeleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
+	type csmStep struct {
+		Status      string     `json:"status"`
+		StartedAt   *time.Time `json:"startedAt,omitempty"`
+		CompletedAt *time.Time `json:"completedAt,omitempty"`
+		DurationH   float64    `json:"durationH"`
+	}
+	type csmCustomer struct {
+		ID         string    `json:"id"`
+		Name       string    `json:"name"`
+		Scenario   string    `json:"scenario"`
+		CSE        string    `json:"cse"`
+		StepTitles []string  `json:"step_titles"`
+		Steps      []csmStep `json:"steps"`
+	}
+
+	type groupKey struct{ domain, scenario string }
+	type group struct {
+		domain  string
+		best    *session.Session
+	}
+
+	groups := map[groupKey]*group{}
+	for _, sess := range s.mgr.All() {
+		domain := emailDomain(sess.UserEmail)
+		if domain == "" {
+			continue
+		}
+		k := groupKey{domain, sess.Scenario}
+		g, ok := groups[k]
+		if !ok {
+			g = &group{domain: domain}
+			groups[k] = g
+		}
+		// Prefer: most completed steps; on tie, prefer active over expired.
+		if g.best == nil ||
+			len(sess.CompletedSteps) > len(g.best.CompletedSteps) ||
+			(len(sess.CompletedSteps) == len(g.best.CompletedSteps) &&
+				sess.Status != session.StatusExpired && g.best.Status == session.StatusExpired) {
+			g.best = sess
+		}
+	}
+
+	result := make([]csmCustomer, 0, len(groups))
+	for k, g := range groups {
+		sess := g.best
+		sc, err := scenario.Load(s.scenariosFS, k.scenario)
+		if err != nil {
+			continue
+		}
+
+		completed := len(sess.CompletedSteps)
+		isActive := sess.Status != session.StatusExpired
+
+		steps := make([]csmStep, len(sc.Steps))
+		for i := range sc.Steps {
+			switch {
+			case i < completed:
+				t := sess.CreatedAt
+				steps[i] = csmStep{Status: "passed", CompletedAt: &t}
+			case i == completed && isActive:
+				t := sess.CreatedAt
+				steps[i] = csmStep{Status: "active", StartedAt: &t}
+			default:
+				steps[i] = csmStep{Status: "pending"}
+			}
+		}
+
+		titles := make([]string, len(sc.Steps))
+		for i, step := range sc.Steps {
+			titles[i] = step.Title
+		}
+
+		result = append(result, csmCustomer{
+			ID:         g.domain,
+			Name:       g.domain,
+			Scenario:   sc.Title,
+			CSE:        "",
+			StepTitles: titles,
+			Steps:      steps,
+		})
+	}
+
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	jsonOK(w, result)
+}
+
+func emailDomain(email string) string {
+	at := strings.LastIndex(email, "@")
+	if at < 0 || at == len(email)-1 {
+		return ""
+	}
+	return strings.ToLower(email[at+1:])
+}
+
 // ── Existing handlers ─────────────────────────────────────────────────────────
 
 func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
@@ -193,8 +296,9 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	userEmail := r.Header.Get("X-Auth-Request-Email")
 	cid := clientID(w, r)
-	sess, err := s.mgr.Create(r.Context(), cid, req.Scenario)
+	sess, err := s.mgr.Create(r.Context(), cid, req.Scenario, userEmail)
 	if err != nil {
 		if err == session.ErrSessionExists {
 			jsonError(w, "you already have an active lab session", http.StatusConflict)
@@ -268,8 +372,22 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() { _ = resp.Body.Close() }()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		jsonError(w, "verify: read response", http.StatusBadGateway)
+		return
+	}
+	var result struct {
+		Passed bool `json:"passed"`
+	}
+	if json.Unmarshal(respBody, &result) == nil && result.Passed {
+		if err := s.mgr.MarkStepComplete(r.Context(), r.PathValue("id"), step); err != nil {
+			log.Printf("mark step complete: %v", err)
+		}
+	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = io.Copy(w, resp.Body)
+	_, _ = w.Write(respBody)
 }
 
 func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {

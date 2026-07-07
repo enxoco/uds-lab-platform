@@ -13,7 +13,7 @@ func (in *LabSession) DeepCopyInto(out *LabSession) {
 	out.TypeMeta = in.TypeMeta
 	in.ObjectMeta.DeepCopyInto(&out.ObjectMeta)
 	in.Spec.DeepCopyInto(&out.Spec)
-	out.Status = in.Status
+	in.Status.DeepCopyInto(&out.Status)
 }
 
 // DeepCopy returns a deep copy of the receiver.
@@ -53,6 +53,11 @@ func (in *LabSessionSpec) DeepCopy() *LabSessionSpec {
 // DeepCopyInto copies the receiver into out.
 func (in *LabSessionStatus) DeepCopyInto(out *LabSessionStatus) {
 	*out = *in
+	if in.CompletedSteps != nil {
+		in, out := &in.CompletedSteps, &out.CompletedSteps
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 }
 
 // DeepCopy returns a deep copy of the receiver.
