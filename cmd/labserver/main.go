@@ -22,16 +22,23 @@ import (
 	"github.com/enxoco/uds-lab-platform/internal/scenario"
 	"github.com/enxoco/uds-lab-platform/internal/session"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+type customerInfo struct {
+	DisplayName string `yaml:"display_name"`
+	CSE         string `yaml:"cse"`
+}
 
 type server struct {
 	mgr         *session.Manager
 	scenariosFS fs.FS
 	staticFS    fs.FS
 	ttlMinutes  int
+	customers   map[string]customerInfo
 }
 
 func main() {
@@ -86,6 +93,7 @@ func main() {
 		scenariosFS: scenariosFS,
 		staticFS:    staticFS,
 		ttlMinutes:  ttlMinutes,
+		customers:   loadCustomers(),
 	}
 
 	mux := http.NewServeMux()
@@ -175,7 +183,7 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 		Status      string     `json:"status"`
 		StartedAt   *time.Time `json:"startedAt,omitempty"`
 		CompletedAt *time.Time `json:"completedAt,omitempty"`
-		DurationH   float64    `json:"durationH"`
+		DurationH   float64    `json:"durationH,omitempty"`
 	}
 	type csmCustomer struct {
 		ID         string    `json:"id"`
@@ -228,10 +236,24 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 		for i := range sc.Steps {
 			switch {
 			case i < completed:
-				t := sess.CreatedAt
-				steps[i] = csmStep{Status: "passed", CompletedAt: &t}
+				rec := sess.CompletedSteps[i]
+				t := rec.CompletedAt
+				prev := sess.CreatedAt
+				if i > 0 {
+					prev = sess.CompletedSteps[i-1].CompletedAt
+				}
+				steps[i] = csmStep{
+					Status:      "passed",
+					CompletedAt: &t,
+					DurationH:   rec.CompletedAt.Sub(prev).Hours(),
+				}
 			case i == completed && isActive:
-				t := sess.CreatedAt
+				var t time.Time
+				if completed > 0 {
+					t = sess.CompletedSteps[completed-1].CompletedAt
+				} else {
+					t = sess.CreatedAt
+				}
 				steps[i] = csmStep{Status: "active", StartedAt: &t}
 			default:
 				steps[i] = csmStep{Status: "pending"}
@@ -243,11 +265,16 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 			titles[i] = step.Title
 		}
 
+		info := s.customers[g.domain]
+		name := info.DisplayName
+		if name == "" {
+			name = g.domain
+		}
 		result = append(result, csmCustomer{
 			ID:         g.domain,
-			Name:       g.domain,
+			Name:       name,
 			Scenario:   sc.Title,
-			CSE:        "",
+			CSE:        info.CSE,
 			StepTitles: titles,
 			Steps:      steps,
 		})
@@ -255,6 +282,25 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 
 	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
 	jsonOK(w, result)
+}
+
+func loadCustomers() map[string]customerInfo {
+	data, err := labplatform.ConfigFiles.ReadFile("config/customers.yaml")
+	if err != nil {
+		log.Printf("customers.yaml not found, CSE assignments disabled: %v", err)
+		return map[string]customerInfo{}
+	}
+	var cfg struct {
+		Customers map[string]customerInfo `yaml:"customers"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		log.Printf("customers.yaml parse error: %v", err)
+		return map[string]customerInfo{}
+	}
+	if cfg.Customers == nil {
+		return map[string]customerInfo{}
+	}
+	return cfg.Customers
 }
 
 func emailDomain(email string) string {

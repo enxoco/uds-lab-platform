@@ -51,12 +51,30 @@ func (in *LabSessionSpec) DeepCopy() *LabSessionSpec {
 }
 
 // DeepCopyInto copies the receiver into out.
+func (in *StepRecord) DeepCopyInto(out *StepRecord) {
+	*out = *in
+	in.CompletedAt.DeepCopyInto(&out.CompletedAt)
+}
+
+// DeepCopy returns a deep copy of the receiver.
+func (in *StepRecord) DeepCopy() *StepRecord {
+	if in == nil {
+		return nil
+	}
+	out := new(StepRecord)
+	in.DeepCopyInto(out)
+	return out
+}
+
+// DeepCopyInto copies the receiver into out.
 func (in *LabSessionStatus) DeepCopyInto(out *LabSessionStatus) {
 	*out = *in
 	if in.CompletedSteps != nil {
 		in, out := &in.CompletedSteps, &out.CompletedSteps
-		*out = make([]string, len(*in))
-		copy(*out, *in)
+		*out = make([]StepRecord, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
 	}
 }
 

@@ -66,4 +66,11 @@ spec:
                 completedSteps:
                   type: array
                   items:
-                    type: string
+                    type: object
+                    required: [step, completedAt]
+                    properties:
+                      step:
+                        type: string
+                      completedAt:
+                        type: string
+                        format: date-time

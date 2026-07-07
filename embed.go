@@ -10,3 +10,6 @@ var ScenariosFS embed.FS
 
 //go:embed vm
 var VMFiles embed.FS
+
+//go:embed config
+var ConfigFiles embed.FS
