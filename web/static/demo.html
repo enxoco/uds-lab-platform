@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UDS Labs — Demo</title>
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    .demo-wrap {
+      max-width: 480px;
+      margin: 80px auto;
+      padding: 0 24px;
+    }
+    .demo-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 40px 36px;
+    }
+    .demo-card h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .demo-card p {
+      color: var(--text-muted);
+      font-size: 14px;
+      margin-bottom: 28px;
+      line-height: 1.55;
+    }
+    .form-group {
+      margin-bottom: 20px;
+    }
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin-bottom: 6px;
+    }
+    .form-group input {
+      width: 100%;
+      box-sizing: border-box;
+      padding: 10px 12px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      font-size: 14px;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus {
+      border-color: var(--accent);
+    }
+    .btn-start {
+      width: 100%;
+      padding: 12px;
+      background: var(--accent);
+      border: none;
+      border-radius: var(--radius);
+      color: #fff;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-start:hover { opacity: 0.85; }
+    .btn-start:disabled { opacity: 0.5; cursor: not-allowed; }
+    .error-msg {
+      margin-top: 16px;
+      padding: 10px 14px;
+      background: rgba(248,81,73,0.1);
+      border: 1px solid rgba(248,81,73,0.3);
+      border-radius: var(--radius);
+      color: var(--danger);
+      font-size: 13px;
+      display: none;
+    }
+    .loading-msg {
+      margin-top: 16px;
+      text-align: center;
+      color: var(--text-muted);
+      font-size: 13px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <span class="logo">UDS Labs</span>
+  </nav>
+  <div class="demo-wrap">
+    <div class="demo-card" id="form-card">
+      <h1>Start your UDS demo</h1>
+      <p>Enter your email to get hands-on access to a live UDS environment. No account required.</p>
+      <div class="form-group">
+        <label for="email">Work email</label>
+        <input id="email" type="email" placeholder="you@company.com" autocomplete="email" autofocus>
+      </div>
+      <button class="btn-start" id="btn-start" onclick="startDemo()">Launch demo environment</button>
+      <div class="error-msg" id="error-msg"></div>
+      <div class="loading-msg" id="loading-msg">Launching your environment, please wait…</div>
+    </div>
+  </div>
+  <script>
+    const token = new URLSearchParams(location.search).get('t');
+
+    if (!token) {
+      document.getElementById('form-card').innerHTML =
+        '<p style="color:var(--danger);text-align:center">Invalid demo link. Please ask your contact for a new one.</p>';
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('error-msg');
+      el.textContent = msg;
+      el.style.display = 'block';
+      document.getElementById('loading-msg').style.display = 'none';
+      document.getElementById('btn-start').disabled = false;
+    }
+
+    async function startDemo() {
+      const email = document.getElementById('email').value.trim();
+      if (!email || !email.includes('@')) {
+        showError('Please enter a valid email address.');
+        return;
+      }
+
+      document.getElementById('btn-start').disabled = true;
+      document.getElementById('error-msg').style.display = 'none';
+      document.getElementById('loading-msg').style.display = 'block';
+
+      try {
+        const res = await fetch('/api/demo-sessions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token, email }),
+        });
+
+        if (res.status === 410) {
+          showError('This demo link has expired. Please ask your contact for a new one.');
+          return;
+        }
+        if (res.status === 401) {
+          showError('This demo link is invalid. Please ask your contact for a new one.');
+          return;
+        }
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          showError(body.error || 'Something went wrong. Please try again.');
+          return;
+        }
+
+        const data = await res.json();
+        window.location.href = data.redirect_url;
+      } catch (e) {
+        showError('Network error. Please check your connection and try again.');
+      }
+    }
+
+    document.getElementById('email')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') startDemo();
+    });
+  </script>
+</body>
+</html>

@@ -41,3 +41,47 @@ components:
             path: image
     images:
       - ghcr.io/enxoco/uds-lab-platform:dev-local
+    actions:
+      onDeploy:
+        after:
+          # Pepr processes the UDS Package CR and creates two Istio
+          # AuthorizationPolicies that gate all traffic through Keycloak SSO.
+          # The demo flow needs /demo and /api/demo-sessions to bypass both.
+          # We patch the policies here so this happens on every deploy/upgrade.
+          #
+          # Policy structure (ambient/waypoint mode — no port-15020 exemption):
+          #   Both policies target the waypoint Gateway, not a workload sidecar.
+          #   Neither policy has a `to` field — we add one to restrict the rule
+          #   to non-demo paths, which lets /demo bypass SSO entirely.
+          - description: Wait for Pepr to create authservice AuthorizationPolicy
+            maxTotalSeconds: 120
+            wait:
+              cluster:
+                kind: AuthorizationPolicy
+                name: uds-lab-platform-authservice
+                namespace: lab-platform
+          - description: Wait for Pepr to create jwt-authz AuthorizationPolicy
+            maxTotalSeconds: 120
+            wait:
+              cluster:
+                kind: AuthorizationPolicy
+                name: uds-lab-platform-jwt-authz
+                namespace: lab-platform
+          - description: Exempt /demo and /api/demo-sessions from authservice
+            maxTotalSeconds: 30
+            cmd: |
+              if ! kubectl patch authorizationpolicy uds-lab-platform-authservice \
+                  -n lab-platform \
+                  --type=json \
+                  -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'; then
+                echo "WARNING: authservice patch failed — run: uds run patch-demo-routes"
+              fi
+          - description: Exempt /demo and /api/demo-sessions from jwt-authz
+            maxTotalSeconds: 30
+            cmd: |
+              if ! kubectl patch authorizationpolicy uds-lab-platform-jwt-authz \
+                  -n lab-platform \
+                  --type=json \
+                  -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'; then
+                echo "WARNING: jwt-authz patch failed — run: uds run patch-demo-routes"
+              fi

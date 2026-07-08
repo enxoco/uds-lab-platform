@@ -5,4 +5,9 @@
 #   acme.com:
 #     display_name: ACME Corp
 #     cse: Jordan M.
+
+# Keycloak group whose members see the "Demo Links" AE tab in the admin UI.
+# Must match the exact group path as reported in X-Auth-Request-Groups.
+ae_group: "/UDS Core/Admin"
+
 customers: {}

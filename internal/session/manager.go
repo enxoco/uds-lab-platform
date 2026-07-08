@@ -41,7 +41,8 @@ func NewManager(k8s client.Client, namespace string, ttl time.Duration, scenario
 
 // Create enforces one active session per clientID (TOCTOU-safe via LIST then
 // CREATE), reads scenario metadata, and creates the LabSession CR.
-func (m *Manager) Create(ctx context.Context, clientID, scenarioID, userEmail string) (*Session, error) {
+// Optional extraLabels maps are merged onto the CR labels (later maps win).
+func (m *Manager) Create(ctx context.Context, clientID, scenarioID, userEmail string, extraLabels ...map[string]string) (*Session, error) {
 	// Reject if a non-terminal session already exists for this client.
 	existing := &labv1.LabSessionList{}
 	if err := m.client.List(ctx, existing,
@@ -69,11 +70,18 @@ func (m *Manager) Create(ctx context.Context, clientID, scenarioID, userEmail st
 	now := time.Now()
 	expiresAt := now.Add(m.ttl)
 
+	labels := map[string]string{"lab.uds.dev/client": clientID}
+	for _, extra := range extraLabels {
+		for k, v := range extra {
+			labels[k] = v
+		}
+	}
+
 	ls := &labv1.LabSession{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      id,
 			Namespace: m.namespace,
-			Labels:    map[string]string{"lab.uds.dev/client": clientID},
+			Labels:    labels,
 		},
 		Spec: labv1.LabSessionSpec{
 			SessionID:      id,
@@ -202,6 +210,8 @@ func lsToSession(ls *labv1.LabSession) *Session {
 		ServiceDNS:     ls.Status.ServiceDNS,
 		Status:         status,
 		BrowserEnabled: ls.Spec.BrowserEnabled,
+		SessionType:    ls.Labels["lab.uds.dev/session-type"],
+		AEToken:        ls.Labels["lab.uds.dev/ae-token"],
 		CreatedAt:      ls.CreationTimestamp.Time,
 		ExpiresAt:      ls.Spec.ExpiresAt.Time,
 		CompletedSteps: lsStepRecords(ls.Status.CompletedSteps),

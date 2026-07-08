@@ -77,15 +77,18 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// TTL: once expired, delete the CR — its finalizer triggers Teardown.
+	// TTL: once expired, tear down the VM but retain the CR so the CSM
+	// dashboard can read completed steps for up to 30 days.
 	if !ls.Spec.ExpiresAt.IsZero() && time.Now().After(ls.Spec.ExpiresAt.Time) {
-		l.Info("session expired, deleting", "session", ls.Spec.SessionID)
 		if ls.Status.Phase != labv1.PhaseExpired {
+			l.Info("session expired, tearing down VM", "session", ls.Spec.SessionID)
+			if err := r.Provider.Teardown(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
 			ls.Status.Phase = labv1.PhaseExpired
-			_ = r.Status().Update(ctx, ls)
-		}
-		if err := r.Delete(ctx, ls); err != nil && !apierrors.IsNotFound(err) {
-			return ctrl.Result{}, err
+			if err := r.Status().Update(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
 		return ctrl.Result{}, nil
 	}

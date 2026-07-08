@@ -24,6 +24,8 @@ type Session struct {
 	ServiceDNS     string       `json:"service_dns,omitempty"`
 	Status         Status       `json:"status"`
 	BrowserEnabled bool         `json:"browser_enabled"`
+	SessionType    string       `json:"session_type,omitempty"`
+	AEToken        string       `json:"-"`
 	CreatedAt      time.Time    `json:"created_at"`
 	ExpiresAt      time.Time    `json:"expires_at"`
 	CompletedSteps []StepRecord `json:"completed_steps,omitempty"`
