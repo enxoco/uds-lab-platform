@@ -8,6 +8,7 @@ const (
 	StatusProvisioning Status = "provisioning"
 	StatusReady        Status = "ready"
 	StatusExpired      Status = "expired"
+	StatusPaused       Status = "paused"
 )
 
 // StepRecord mirrors labv1.StepRecord using plain time.Time.
@@ -23,6 +24,7 @@ type Session struct {
 	ClientID       string       `json:"-"`
 	ServiceDNS     string       `json:"service_dns,omitempty"`
 	Status         Status       `json:"status"`
+	Paused         bool         `json:"paused,omitempty"`
 	BrowserEnabled bool         `json:"browser_enabled"`
 	SessionType    string       `json:"session_type,omitempty"`
 	AEToken        string       `json:"-"`

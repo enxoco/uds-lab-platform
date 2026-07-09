@@ -183,6 +183,28 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 	return m.client.Delete(ctx, ls)
 }
 
+// Pause sets Spec.Paused = true, triggering the operator's snapshot-and-suspend flow.
+func (m *Manager) Pause(ctx context.Context, id string) error {
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
+		return fmt.Errorf("session %q not found: %w", id, err)
+	}
+	patch := client.MergeFrom(ls.DeepCopy())
+	ls.Spec.Paused = true
+	return m.client.Patch(ctx, ls, patch)
+}
+
+// Resume sets Spec.Paused = false, triggering the operator to recreate the VM from snapshot.
+func (m *Manager) Resume(ctx context.Context, id string) error {
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
+		return fmt.Errorf("session %q not found: %w", id, err)
+	}
+	patch := client.MergeFrom(ls.DeepCopy())
+	ls.Spec.Paused = false
+	return m.client.Patch(ctx, ls, patch)
+}
+
 func lsStepRecords(in []labv1.StepRecord) []StepRecord {
 	if len(in) == 0 {
 		return nil
@@ -199,6 +221,8 @@ func lsToSession(ls *labv1.LabSession) *Session {
 	switch ls.Status.Phase {
 	case labv1.PhaseReady:
 		status = StatusReady
+	case labv1.PhasePaused:
+		status = StatusPaused
 	case labv1.PhaseFailed, labv1.PhaseExpired:
 		status = StatusExpired
 	}
@@ -209,6 +233,7 @@ func lsToSession(ls *labv1.LabSession) *Session {
 		ClientID:       ls.Spec.ClientID,
 		ServiceDNS:     ls.Status.ServiceDNS,
 		Status:         status,
+		Paused:         ls.Spec.Paused,
 		BrowserEnabled: ls.Spec.BrowserEnabled,
 		SessionType:    ls.Labels["lab.uds.dev/session-type"],
 		AEToken:        ls.Labels["lab.uds.dev/ae-token"],

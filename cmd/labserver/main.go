@@ -166,6 +166,8 @@ func main() {
 	mux.HandleFunc("POST /t/{id}/navigate", srv.navigateBrowser)
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("GET /api/sessions/{id}/services", srv.sessionServices)
+	mux.HandleFunc("POST /api/sessions/{id}/pause", srv.pauseSession)
+	mux.HandleFunc("POST /api/sessions/{id}/resume", srv.resumeSession)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
@@ -396,7 +398,7 @@ func emailDomain(email string) string {
 func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{
 		"session_ttl_minutes": s.ttlMinutes,
-		"is_ae":               s.isAE(r.Header.Get("X-Auth-Request-Groups"), r.Header.Get("X-Auth-Request-Email")),
+		"is_ae":               s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)),
 	})
 }
 
@@ -427,7 +429,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userEmail := r.Header.Get("X-Auth-Request-Email")
+	userEmail := authedEmail(r)
 	cid := clientID(w, r)
 	sess, err := s.mgr.Create(r.Context(), cid, req.Scenario, userEmail)
 	if err != nil {
@@ -481,6 +483,42 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := s.mgr.Delete(r.Context(), id); err != nil {
 		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) pauseSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.mgr.Pause(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) resumeSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.mgr.Resume(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -733,12 +771,45 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// ownsSession checks whether the requesting user owns the session.
-// In production, authservice injects X-Auth-Request-Email and we compare it
-// against the email recorded at session create time. In dev (no authservice),
-// we fall back to the UUID cookie so local testing still works.
-func ownsSession(r *http.Request, sess *session.Session) bool {
+// authedEmail returns the authenticated user's email from the request.
+// Authservice forwards the ID token as "Authorization: Bearer <jwt>" rather
+// than setting X-Auth-Request-Email, so we parse the JWT payload when needed.
+func authedEmail(r *http.Request) string {
 	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+		return strings.ToLower(strings.TrimSpace(email))
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return emailFromJWT(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return ""
+}
+
+// emailFromJWT extracts the email claim from a JWT without signature verification.
+// Safe here because the token was already validated by Istio's RequestAuthentication.
+func emailFromJWT(token string) string {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(claims.Email))
+}
+
+// ownsSession checks whether the requesting user owns the session.
+// In production, authservice injects the ID token as Authorization: Bearer and
+// we parse the email from it. In dev (no authservice), we fall back to the UUID
+// cookie so local testing still works.
+func ownsSession(r *http.Request, sess *session.Session) bool {
+	if email := authedEmail(r); email != "" {
 		return strings.EqualFold(email, sess.UserEmail)
 	}
 	c, err := r.Cookie("lab_client_id")
@@ -750,7 +821,7 @@ func ownsSession(r *http.Request, sess *session.Session) bool {
 // email so that one user always maps to one client regardless of browser or
 // device. In dev (no authservice), we fall back to a UUID cookie.
 func clientID(w http.ResponseWriter, r *http.Request) string {
-	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+	if email := authedEmail(r); email != "" {
 		return emailClientID(email)
 	}
 	const cookieName = "lab_client_id"
@@ -859,7 +930,7 @@ func (s *server) listDemoTokens(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "demo mode not configured", http.StatusServiceUnavailable)
 		return
 	}
-	aeEmail := strings.ToLower(strings.TrimSpace(r.Header.Get("X-Auth-Request-Email")))
+	aeEmail := authedEmail(r)
 
 	records, err := s.readTokenStore(r.Context())
 	if err != nil && !kerrors.IsNotFound(err) {
@@ -927,7 +998,7 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "demo mode not configured", http.StatusServiceUnavailable)
 		return
 	}
-	aeEmail := r.Header.Get("X-Auth-Request-Email")
+	aeEmail := authedEmail(r)
 
 	var req struct {
 		ScenarioID  string `json:"scenario"`
@@ -980,7 +1051,7 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.isAE(r.Header.Get("X-Auth-Request-Groups"), r.Header.Get("X-Auth-Request-Email")) {
+		if !s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)) {
 			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}

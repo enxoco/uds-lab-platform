@@ -31,7 +31,18 @@ type Provider interface {
 	// Reconcile ensures the VM and its supporting objects exist and reports
 	// progress. It does not block waiting for readiness.
 	Reconcile(ctx context.Context, ls *labv1.LabSession) (Result, error)
-	// Teardown removes everything Reconcile created. It must be idempotent and
-	// succeed if the objects are already gone.
+	// Teardown removes everything Reconcile created (compute + disk + snapshot).
+	// It must be idempotent and succeed if the objects are already gone.
 	Teardown(ctx context.Context, ls *labv1.LabSession) error
+	// TeardownCompute removes only the VMI, Service, and NetworkPolicy — leaves
+	// the DataVolume PVC intact so a snapshot can be taken.
+	TeardownCompute(ctx context.Context, ls *labv1.LabSession) error
+	// TeardownDisk removes the DataVolume (and therefore its PVC).
+	TeardownDisk(ctx context.Context, ls *labv1.LabSession) error
+	// Snapshot creates a VolumeSnapshot of the session's disk and returns its
+	// name. The snapshot is not ready immediately; poll with SnapshotReady.
+	Snapshot(ctx context.Context, ls *labv1.LabSession) (string, error)
+	// SnapshotReady returns true when the named VolumeSnapshot is ready to use
+	// as a DataVolume source.
+	SnapshotReady(ctx context.Context, snapName string) (bool, error)
 }
