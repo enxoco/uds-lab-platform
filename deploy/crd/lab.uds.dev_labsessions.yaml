@@ -53,15 +53,19 @@ spec:
                 expiresAt:
                   type: string
                   format: date-time
+                paused:
+                  type: boolean
             status:
               type: object
               properties:
                 phase:
                   type: string
-                  enum: [Provisioning, Running, Ready, Expired, Failed]
+                  enum: [Provisioning, Running, Ready, Expired, Failed, Paused]
                 serviceDNS:
                   type: string
                 message:
+                  type: string
+                snapshotName:
                   type: string
                 completedSteps:
                   type: array

@@ -2,9 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"crypto/hmac"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -23,6 +27,9 @@ import (
 	"github.com/enxoco/uds-lab-platform/internal/session"
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,18 +40,48 @@ type customerInfo struct {
 	CSE         string `yaml:"cse"`
 }
 
+type labConfig struct {
+	AEGroup   string                  `yaml:"ae_group"`
+	Customers map[string]customerInfo `yaml:"customers"`
+}
+
 type server struct {
 	mgr         *session.Manager
+	k8sClient   client.Client
 	scenariosFS fs.FS
 	staticFS    fs.FS
 	ttlMinutes  int
 	customers   map[string]customerInfo
+	aeGroup     string
+	hmacKey     []byte
+	serverNS    string
 }
+
+// demoTokenRecord is one entry in the lab-demo-tokens ConfigMap.
+type demoTokenRecord struct {
+	TokenID    string    `json:"token_id"`
+	AEEmail    string    `json:"ae_email"`
+	ScenarioID string    `json:"scenario_id"`
+	Token      string    `json:"token"`
+	CreatedAt  time.Time `json:"created_at"`
+	ExpiresAt  time.Time `json:"expires_at"`
+	SessionID  string    `json:"session_id,omitempty"`
+}
+
+var errInvalidToken = errors.New("invalid token")
+var errExpiredToken = errors.New("token expired")
 
 func main() {
 	ttlMinutes, _ := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
 	vmNamespace := envOr("VM_NAMESPACE", "uds-lab-vms")
+	serverNS := envOr("SERVER_NAMESPACE", vmNamespace)
 	port := envOr("PORT", "8080")
+
+	hmacKey := []byte(os.Getenv("DEMO_TOKEN_HMAC_KEY"))
+	if len(hmacKey) < 32 {
+		log.Printf("WARNING: DEMO_TOKEN_HMAC_KEY not set or too short (<32 bytes) — demo token routes disabled")
+		hmacKey = nil
+	}
 
 	// Scenarios FS: OS override for development, embedded otherwise.
 	var scenariosFS fs.FS
@@ -77,6 +114,9 @@ func main() {
 	if err := labv1.AddToScheme(scheme); err != nil {
 		log.Fatalf("register LabSession scheme: %v", err)
 	}
+	if err := corev1.AddToScheme(scheme); err != nil {
+		log.Fatalf("register core/v1 scheme: %v", err)
+	}
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
 		log.Fatalf("get kubeconfig: %v", err)
@@ -88,18 +128,31 @@ func main() {
 
 	mgr := session.NewManager(k8s, vmNamespace, time.Duration(ttlMinutes)*time.Minute, scenariosFS)
 
+	labCfg := loadConfig()
 	srv := &server{
 		mgr:         mgr,
+		k8sClient:   k8s,
 		scenariosFS: scenariosFS,
 		staticFS:    staticFS,
 		ttlMinutes:  ttlMinutes,
-		customers:   loadCustomers(),
+		customers:   labCfg.Customers,
+		aeGroup:     labCfg.AEGroup,
+		hmacKey:     hmacKey,
+		serverNS:    serverNS,
 	}
 
 	mux := http.NewServeMux()
 
 	// Health check (always public)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	// Unauthenticated demo routes — authservice MUST exclude /demo and /api/demo-sessions
+	mux.HandleFunc("GET /demo", srv.demoPage)
+	mux.HandleFunc("POST /api/demo-sessions", srv.startDemoSession)
+
+	// AE-only demo token management
+	mux.HandleFunc("GET /api/demo-tokens", srv.requireAE(srv.listDemoTokens))
+	mux.HandleFunc("POST /api/demo-tokens", srv.requireAE(srv.createDemoToken))
 
 	// Protected API routes
 	mux.HandleFunc("GET /api/config", srv.getConfig)
@@ -113,6 +166,8 @@ func main() {
 	mux.HandleFunc("POST /t/{id}/navigate", srv.navigateBrowser)
 	mux.HandleFunc("POST /api/sessions/{id}/verify/{step}", srv.verifyStep)
 	mux.HandleFunc("GET /api/sessions/{id}/services", srv.sessionServices)
+	mux.HandleFunc("POST /api/sessions/{id}/pause", srv.pauseSession)
+	mux.HandleFunc("POST /api/sessions/{id}/resume", srv.resumeSession)
 	mux.HandleFunc("/t/{id}/", srv.terminalProxy)
 	mux.HandleFunc("/t/{id}/shell/", srv.shellProxy)
 	mux.HandleFunc("/vnc/{id}/", srv.browserProxy)
@@ -212,6 +267,10 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 	groups := map[groupKey]*group{}
 	for _, sess := range s.mgr.All() {
+		// Skip demo sessions — they appear in the AE Demo Links tab, not here.
+		if sess.SessionType == "demo" {
+			continue
+		}
 		// Skip sessions that expired more than 30 days ago.
 		if sess.Status == session.StatusExpired && sess.ExpiresAt.Before(cutoff) {
 			continue
@@ -306,23 +365,24 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, result)
 }
 
-func loadCustomers() map[string]customerInfo {
+func loadConfig() labConfig {
 	data, err := labplatform.ConfigFiles.ReadFile("config/customers.yaml")
 	if err != nil {
-		log.Printf("customers.yaml not found, CSE assignments disabled: %v", err)
-		return map[string]customerInfo{}
+		log.Printf("customers.yaml not found, CSE/AE config disabled: %v", err)
+		return labConfig{Customers: map[string]customerInfo{}}
 	}
-	var cfg struct {
-		Customers map[string]customerInfo `yaml:"customers"`
-	}
+	var cfg labConfig
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		log.Printf("customers.yaml parse error: %v", err)
-		return map[string]customerInfo{}
+		return labConfig{Customers: map[string]customerInfo{}}
 	}
 	if cfg.Customers == nil {
-		return map[string]customerInfo{}
+		cfg.Customers = map[string]customerInfo{}
 	}
-	return cfg.Customers
+	if cfg.AEGroup == "" {
+		cfg.AEGroup = "/UDS Core/Admin"
+	}
+	return cfg
 }
 
 func emailDomain(email string) string {
@@ -336,7 +396,10 @@ func emailDomain(email string) string {
 // ── Existing handlers ─────────────────────────────────────────────────────────
 
 func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
-	jsonOK(w, map[string]any{"session_ttl_minutes": s.ttlMinutes})
+	jsonOK(w, map[string]any{
+		"session_ttl_minutes": s.ttlMinutes,
+		"is_ae":               s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)),
+	})
 }
 
 func (s *server) listScenarios(w http.ResponseWriter, r *http.Request) {
@@ -366,7 +429,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	userEmail := r.Header.Get("X-Auth-Request-Email")
+	userEmail := authedEmail(r)
 	cid := clientID(w, r)
 	sess, err := s.mgr.Create(r.Context(), cid, req.Scenario, userEmail)
 	if err != nil {
@@ -425,6 +488,42 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (s *server) pauseSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.mgr.Pause(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *server) resumeSession(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	sess, ok := s.mgr.Get(id)
+	if !ok {
+		jsonError(w, "not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		jsonError(w, "forbidden", http.StatusForbidden)
+		return
+	}
+	if err := s.mgr.Resume(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 	sess, ok := s.mgr.Get(r.PathValue("id"))
 	if !ok {
@@ -458,16 +557,21 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "verify: read response", http.StatusBadGateway)
 		return
 	}
+	// Normalize: VM agents may return either "passed" or "pass".
 	var result struct {
 		Passed bool `json:"passed"`
+		Pass   bool `json:"pass"`
 	}
-	if json.Unmarshal(respBody, &result) == nil && result.Passed {
+	_ = json.Unmarshal(respBody, &result)
+	passed := result.Passed || result.Pass
+	if passed {
 		if err := s.mgr.MarkStepComplete(r.Context(), r.PathValue("id"), step); err != nil {
 			log.Printf("mark step complete: %v", err)
 		}
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_, _ = w.Write(respBody)
+	normalized, _ := json.Marshal(map[string]bool{"passed": passed})
+	_, _ = w.Write(normalized)
 }
 
 func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
@@ -667,12 +771,45 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// ownsSession checks whether the requesting user owns the session.
-// In production, authservice injects X-Auth-Request-Email and we compare it
-// against the email recorded at session create time. In dev (no authservice),
-// we fall back to the UUID cookie so local testing still works.
-func ownsSession(r *http.Request, sess *session.Session) bool {
+// authedEmail returns the authenticated user's email from the request.
+// Authservice forwards the ID token as "Authorization: Bearer <jwt>" rather
+// than setting X-Auth-Request-Email, so we parse the JWT payload when needed.
+func authedEmail(r *http.Request) string {
 	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+		return strings.ToLower(strings.TrimSpace(email))
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return emailFromJWT(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return ""
+}
+
+// emailFromJWT extracts the email claim from a JWT without signature verification.
+// Safe here because the token was already validated by Istio's RequestAuthentication.
+func emailFromJWT(token string) string {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Email string `json:"email"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSpace(claims.Email))
+}
+
+// ownsSession checks whether the requesting user owns the session.
+// In production, authservice injects the ID token as Authorization: Bearer and
+// we parse the email from it. In dev (no authservice), we fall back to the UUID
+// cookie so local testing still works.
+func ownsSession(r *http.Request, sess *session.Session) bool {
+	if email := authedEmail(r); email != "" {
 		return strings.EqualFold(email, sess.UserEmail)
 	}
 	c, err := r.Cookie("lab_client_id")
@@ -684,7 +821,7 @@ func ownsSession(r *http.Request, sess *session.Session) bool {
 // email so that one user always maps to one client regardless of browser or
 // device. In dev (no authservice), we fall back to a UUID cookie.
 func clientID(w http.ResponseWriter, r *http.Request) string {
-	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+	if email := authedEmail(r); email != "" {
 		return emailClientID(email)
 	}
 	const cookieName = "lab_client_id"
@@ -715,4 +852,365 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// ── Demo mode ─────────────────────────────────────────────────────────────────
+
+func (s *server) demoPage(w http.ResponseWriter, r *http.Request) {
+	http.ServeFileFS(w, r, s.staticFS, "demo.html")
+}
+
+func (s *server) startDemoSession(w http.ResponseWriter, r *http.Request) {
+	if s.hmacKey == nil {
+		jsonError(w, "demo mode not configured", http.StatusServiceUnavailable)
+		return
+	}
+	var req struct {
+		Token string `json:"token"`
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" || req.Email == "" {
+		jsonError(w, "token and email required", http.StatusBadRequest)
+		return
+	}
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	claims, err := validateDemoToken(s.hmacKey, req.Token)
+	if errors.Is(err, errExpiredToken) {
+		jsonError(w, "this demo link has expired", http.StatusGone)
+		return
+	}
+	if err != nil {
+		jsonError(w, "invalid demo link", http.StatusUnauthorized)
+		return
+	}
+
+	cid := demoClientID(claims.TokenID, req.Email)
+
+	sess, err := s.mgr.Create(r.Context(), cid, claims.ScenarioID, req.Email, map[string]string{
+		"lab.uds.dev/session-type": "demo",
+		"lab.uds.dev/ae-token":     claims.TokenID,
+	})
+	if err != nil {
+		if errors.Is(err, session.ErrSessionExists) {
+			existing, ok := s.mgr.GetActive(r.Context(), cid)
+			if !ok {
+				jsonError(w, "session error", http.StatusInternalServerError)
+				return
+			}
+			s.setDemoCookie(w, cid)
+			jsonOK(w, map[string]string{"redirect_url": "/lab.html?session=" + existing.ID + "&scenario=" + existing.Scenario})
+			return
+		}
+		log.Printf("create demo session: %v", err)
+		jsonError(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Patch ConfigMap record with the new session ID.
+	go s.patchDemoTokenSessionID(claims.TokenID, sess.ID)
+
+	s.setDemoCookie(w, cid)
+	jsonOK(w, map[string]string{"redirect_url": "/lab.html?session=" + sess.ID + "&scenario=" + sess.Scenario})
+}
+
+func (s *server) setDemoCookie(w http.ResponseWriter, cid string) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     "lab_client_id",
+		Value:    cid,
+		Path:     "/",
+		MaxAge:   86400 * 7,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+	})
+}
+
+func (s *server) listDemoTokens(w http.ResponseWriter, r *http.Request) {
+	if s.hmacKey == nil {
+		jsonError(w, "demo mode not configured", http.StatusServiceUnavailable)
+		return
+	}
+	aeEmail := authedEmail(r)
+
+	records, err := s.readTokenStore(r.Context())
+	if err != nil && !kerrors.IsNotFound(err) {
+		log.Printf("read demo token store: %v", err)
+		jsonError(w, "cannot read token store", http.StatusInternalServerError)
+		return
+	}
+
+	// Index demo sessions by AE token ID.
+	allSessions := s.mgr.All()
+	sessionByToken := map[string]*session.Session{}
+	for _, sess := range allSessions {
+		if sess.SessionType == "demo" && sess.AEToken != "" {
+			sessionByToken[sess.AEToken] = sess
+		}
+	}
+
+	type tokenView struct {
+		TokenID        string    `json:"token_id"`
+		ScenarioID     string    `json:"scenario_id"`
+		ShareURL       string    `json:"share_url"`
+		ExpiresAt      time.Time `json:"expires_at"`
+		ProspectEmail  *string   `json:"prospect_email"`
+		StepsCompleted int       `json:"steps_completed"`
+		TotalSteps     int       `json:"total_steps"`
+		LastActive     *time.Time `json:"last_active"`
+	}
+
+	baseURL := demoBaseURL(r)
+	result := []tokenView{}
+	for _, rec := range records {
+		if !strings.EqualFold(rec.AEEmail, aeEmail) {
+			continue
+		}
+
+		view := tokenView{
+			TokenID:    rec.TokenID,
+			ScenarioID: rec.ScenarioID,
+			ShareURL:   baseURL + "/demo?t=" + rec.Token,
+			ExpiresAt:  rec.ExpiresAt,
+		}
+
+		sc, _ := scenario.Load(s.scenariosFS, rec.ScenarioID)
+		if sc != nil {
+			view.TotalSteps = len(sc.Steps)
+		}
+
+		if sess := sessionByToken[rec.TokenID]; sess != nil {
+			view.ProspectEmail = &sess.UserEmail
+			view.StepsCompleted = len(sess.CompletedSteps)
+			if len(sess.CompletedSteps) > 0 {
+				t := sess.CompletedSteps[len(sess.CompletedSteps)-1].CompletedAt
+				view.LastActive = &t
+			}
+		}
+
+		result = append(result, view)
+	}
+
+	jsonOK(w, result)
+}
+
+func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
+	if s.hmacKey == nil {
+		jsonError(w, "demo mode not configured", http.StatusServiceUnavailable)
+		return
+	}
+	aeEmail := authedEmail(r)
+
+	var req struct {
+		ScenarioID  string `json:"scenario"`
+		ExpiresHours int   `json:"expires_hours"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ScenarioID == "" {
+		jsonError(w, "scenario required", http.StatusBadRequest)
+		return
+	}
+	if _, err := scenario.Load(s.scenariosFS, req.ScenarioID); err != nil {
+		jsonError(w, "scenario not found", http.StatusBadRequest)
+		return
+	}
+	if req.ExpiresHours <= 0 {
+		req.ExpiresHours = 72
+	}
+
+	expUnix := time.Now().Add(time.Duration(req.ExpiresHours) * time.Hour).Unix()
+	tokenID, token, err := generateDemoToken(s.hmacKey, req.ScenarioID, aeEmail, expUnix)
+	if err != nil {
+		log.Printf("generate demo token: %v", err)
+		jsonError(w, "token generation failed", http.StatusInternalServerError)
+		return
+	}
+
+	rec := demoTokenRecord{
+		TokenID:    tokenID,
+		AEEmail:    aeEmail,
+		ScenarioID: req.ScenarioID,
+		Token:      token,
+		CreatedAt:  time.Now(),
+		ExpiresAt:  time.Unix(expUnix, 0),
+	}
+	if err := s.writeTokenRecord(r.Context(), tokenID, rec); err != nil {
+		log.Printf("write demo token record: %v", err)
+		jsonError(w, "cannot save token", http.StatusInternalServerError)
+		return
+	}
+
+	shareURL := demoBaseURL(r) + "/demo?t=" + token
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"token_id":  tokenID,
+		"share_url": shareURL,
+	})
+}
+
+// ── Demo middleware ───────────────────────────────────────────────────────────
+
+func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)) {
+			jsonError(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		h(w, r)
+	}
+}
+
+// isAE returns true if the request comes from an AE/admin user.
+// Group membership is checked first when the header is present; if authservice
+// does not forward X-Auth-Request-Groups (the common case), any authenticated
+// user (non-empty email) is treated as an AE since the admin page is already
+// SSO-gated.
+func (s *server) isAE(groups, email string) bool {
+	if groups != "" {
+		if s.aeGroup == "" {
+			return false
+		}
+		for _, g := range strings.Split(groups, ",") {
+			if strings.TrimSpace(g) == s.aeGroup {
+				return true
+			}
+		}
+		return false
+	}
+	return strings.TrimSpace(email) != ""
+}
+
+// ── Demo token helpers ────────────────────────────────────────────────────────
+
+func generateDemoToken(key []byte, scenarioID, aeEmail string, expUnix int64) (tokenID, token string, err error) {
+	tokenID = uuid.New().String()
+	payload := strings.Join([]string{scenarioID, aeEmail, strconv.FormatInt(expUnix, 10), tokenID}, "\n")
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(payload))
+	sig := hex.EncodeToString(mac.Sum(nil))
+	raw := payload + "\n" + sig
+	return tokenID, base64.RawURLEncoding.EncodeToString([]byte(raw)), nil
+}
+
+type demoTokenClaims struct {
+	ScenarioID string
+	AEEmail    string
+	ExpUnix    int64
+	TokenID    string
+}
+
+func validateDemoToken(key []byte, token string) (*demoTokenClaims, error) {
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, errInvalidToken
+	}
+	parts := strings.SplitN(string(raw), "\n", 5)
+	if len(parts) != 5 {
+		return nil, errInvalidToken
+	}
+	payload := strings.Join(parts[:4], "\n")
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(payload))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	if !hmac.Equal([]byte(expected), []byte(parts[4])) {
+		return nil, errInvalidToken
+	}
+	expUnix, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return nil, errInvalidToken
+	}
+	if time.Now().Unix() > expUnix {
+		return nil, errExpiredToken
+	}
+	return &demoTokenClaims{
+		ScenarioID: parts[0],
+		AEEmail:    parts[1],
+		ExpUnix:    expUnix,
+		TokenID:    parts[3],
+	}, nil
+}
+
+func demoClientID(tokenID, email string) string {
+	h := sha256.Sum256([]byte(tokenID + ":" + strings.ToLower(strings.TrimSpace(email))))
+	return hex.EncodeToString(h[:16])
+}
+
+func demoBaseURL(r *http.Request) string {
+	scheme := "https"
+	if r.Header.Get("X-Forwarded-Proto") == "http" || (r.TLS == nil && r.Header.Get("X-Forwarded-Proto") == "") {
+		scheme = "http"
+	}
+	host := r.Host
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+		host = fwd
+	}
+	return scheme + "://" + host
+}
+
+// ── ConfigMap token store ─────────────────────────────────────────────────────
+
+const demoTokensCM = "lab-demo-tokens"
+
+func (s *server) readTokenStore(ctx context.Context) ([]demoTokenRecord, error) {
+	cm := &corev1.ConfigMap{}
+	if err := s.k8sClient.Get(ctx, client.ObjectKey{Name: demoTokensCM, Namespace: s.serverNS}, cm); err != nil {
+		return nil, err
+	}
+	out := make([]demoTokenRecord, 0, len(cm.Data))
+	for _, v := range cm.Data {
+		var rec demoTokenRecord
+		if json.Unmarshal([]byte(v), &rec) == nil {
+			out = append(out, rec)
+		}
+	}
+	return out, nil
+}
+
+func (s *server) writeTokenRecord(ctx context.Context, tokenID string, rec demoTokenRecord) error {
+	data, err := json.Marshal(rec)
+	if err != nil {
+		return err
+	}
+
+	cm := &corev1.ConfigMap{}
+	getErr := s.k8sClient.Get(ctx, client.ObjectKey{Name: demoTokensCM, Namespace: s.serverNS}, cm)
+	if kerrors.IsNotFound(getErr) {
+		cm = &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{Name: demoTokensCM, Namespace: s.serverNS},
+			Data:       map[string]string{tokenID: string(data)},
+		}
+		return s.k8sClient.Create(ctx, cm)
+	}
+	if getErr != nil {
+		return getErr
+	}
+	patch := client.MergeFrom(cm.DeepCopy())
+	if cm.Data == nil {
+		cm.Data = map[string]string{}
+	}
+	cm.Data[tokenID] = string(data)
+	return s.k8sClient.Patch(ctx, cm, patch)
+}
+
+func (s *server) patchDemoTokenSessionID(tokenID, sessionID string) {
+	ctx := context.Background()
+	cm := &corev1.ConfigMap{}
+	if err := s.k8sClient.Get(ctx, client.ObjectKey{Name: demoTokensCM, Namespace: s.serverNS}, cm); err != nil {
+		log.Printf("patch demo token session_id: get configmap: %v", err)
+		return
+	}
+	raw, ok := cm.Data[tokenID]
+	if !ok {
+		return
+	}
+	var rec demoTokenRecord
+	if err := json.Unmarshal([]byte(raw), &rec); err != nil {
+		return
+	}
+	rec.SessionID = sessionID
+	data, _ := json.Marshal(rec)
+	patch := client.MergeFrom(cm.DeepCopy())
+	cm.Data[tokenID] = string(data)
+	if err := s.k8sClient.Patch(ctx, cm, patch); err != nil {
+		log.Printf("patch demo token session_id: %v", err)
+	}
 }

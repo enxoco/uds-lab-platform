@@ -20,6 +20,8 @@ const (
 	PhaseExpired LabSessionPhase = "Expired"
 	// PhaseFailed: reconciliation hit a terminal error (see Status.Message).
 	PhaseFailed LabSessionPhase = "Failed"
+	// PhasePaused: VM and disk torn down; VolumeSnapshot preserved for resume.
+	PhasePaused LabSessionPhase = "Paused"
 )
 
 // LabSessionSpec is the desired session. The server sets every field at create
@@ -46,6 +48,9 @@ type LabSessionSpec struct {
 	// ExpiresAt is the hard TTL deadline. The operator deletes the session once
 	// now > ExpiresAt (replaces the server's in-memory cleanup loop).
 	ExpiresAt metav1.Time `json:"expiresAt"`
+	// Paused signals the operator to snapshot the VM disk and tear down compute.
+	// Set to false to resume (operator recreates the VM from the snapshot).
+	Paused bool `json:"paused,omitempty"`
 }
 
 // LabSessionStatus is the observed session, owned entirely by the operator.
@@ -62,6 +67,10 @@ type LabSessionStatus struct {
 	// Written by the lab server after each successful /verify call; read by
 	// the CSM dashboard to show per-step durations.
 	CompletedSteps []StepRecord `json:"completedSteps,omitempty"`
+	// SnapshotName is the VolumeSnapshot taken when the session was paused.
+	// Non-empty means resume should restore from this snapshot instead of cloning
+	// the golden PVC. Cleared when a paused session is fully torn down.
+	SnapshotName string `json:"snapshotName,omitempty"`
 }
 
 // StepRecord captures a single verified step and the time it passed.

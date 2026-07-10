@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"time"
 
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -42,7 +41,9 @@ type LabSessionReconciler struct {
 // +kubebuilder:rbac:groups=kubevirt.io,resources=virtualmachineinstances,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=cdi.kubevirt.io,resources=datavolumes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=snapshot.storage.k8s.io,resources=volumesnapshots,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile drives one LabSession toward Ready, enforces its TTL, and tears it
 // down on deletion.
@@ -77,16 +78,68 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{Requeue: true}, nil
 	}
 
-	// TTL: once expired, delete the CR — its finalizer triggers Teardown.
+	// TTL: once expired, tear down everything (including any snapshot) but retain
+	// the CR so the CSM dashboard can read completed steps for up to 30 days.
 	if !ls.Spec.ExpiresAt.IsZero() && time.Now().After(ls.Spec.ExpiresAt.Time) {
-		l.Info("session expired, deleting", "session", ls.Spec.SessionID)
 		if ls.Status.Phase != labv1.PhaseExpired {
+			l.Info("session expired, tearing down VM", "session", ls.Spec.SessionID)
+			if err := r.Provider.Teardown(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
 			ls.Status.Phase = labv1.PhaseExpired
-			_ = r.Status().Update(ctx, ls)
+			ls.Status.SnapshotName = ""
+			if err := r.Status().Update(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
 		}
-		if err := r.Delete(ctx, ls); err != nil && !apierrors.IsNotFound(err) {
+		return ctrl.Result{}, nil
+	}
+
+	// Pause: stop compute, snapshot disk, then drop disk. Two-phase to allow
+	// snapshot creation while the PVC still exists.
+	if ls.Spec.Paused && ls.Status.Phase != labv1.PhasePaused {
+		if ls.Status.SnapshotName == "" {
+			// Phase 1: tear down the VM, create a snapshot of the still-live PVC.
+			if err := r.Provider.TeardownCompute(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
+			snapName, err := r.Provider.Snapshot(ctx, ls)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			ls.Status.SnapshotName = snapName
+			ls.Status.ServiceDNS = ""
+			if err := r.Status().Update(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		// Phase 2: wait for snapshot, then drop the disk.
+		ready, err := r.Provider.SnapshotReady(ctx, ls.Status.SnapshotName)
+		if err != nil || !ready {
+			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
+		}
+		if err := r.Provider.TeardownDisk(ctx, ls); err != nil {
 			return ctrl.Result{}, err
 		}
+		ls.Status.Phase = labv1.PhasePaused
+		if err := r.Status().Update(ctx, ls); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, nil
+	}
+
+	// Resume: clear paused flag and let Reconcile recreate the VM from snapshot.
+	if !ls.Spec.Paused && ls.Status.Phase == labv1.PhasePaused {
+		ls.Status.Phase = labv1.PhaseProvisioning
+		if err := r.Status().Update(ctx, ls); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: time.Second}, nil
+	}
+
+	// Skip reconciliation while paused (nothing to do).
+	if ls.Status.Phase == labv1.PhasePaused {
 		return ctrl.Result{}, nil
 	}
 

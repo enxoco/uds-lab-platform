@@ -25,6 +25,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 
+	snapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	kvv1 "kubevirt.io/api/core/v1"
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 
@@ -166,15 +167,14 @@ func (p *Provider) Reconcile(ctx context.Context, ls *labv1.LabSession) (provide
 	}
 }
 
-// Teardown deletes the session's child objects. Owner references also cascade
-// on LabSession deletion; this makes teardown explicit and order-independent.
-func (p *Provider) Teardown(ctx context.Context, ls *labv1.LabSession) error {
+// TeardownCompute deletes the VMI, Service, and NetworkPolicy but leaves the
+// DataVolume PVC intact so a VolumeSnapshot can be taken.
+func (p *Provider) TeardownCompute(ctx context.Context, ls *labv1.LabSession) error {
 	name := resourceName(ls)
 	objs := []client.Object{
 		&kvv1.VirtualMachineInstance{ObjectMeta: metav1.ObjectMeta{Namespace: p.cfg.Namespace, Name: name}},
 		&netv1.NetworkPolicy{ObjectMeta: metav1.ObjectMeta{Namespace: p.cfg.Namespace, Name: name}},
 		&corev1.Service{ObjectMeta: metav1.ObjectMeta{Namespace: p.cfg.Namespace, Name: name}},
-		&cdiv1.DataVolume{ObjectMeta: metav1.ObjectMeta{Namespace: p.cfg.Namespace, Name: name}},
 	}
 	for _, o := range objs {
 		if err := p.cfg.Client.Delete(ctx, o); err != nil && !apierrors.IsNotFound(err) {
@@ -182,6 +182,67 @@ func (p *Provider) Teardown(ctx context.Context, ls *labv1.LabSession) error {
 		}
 	}
 	return nil
+}
+
+// TeardownDisk deletes the DataVolume (and therefore its underlying PVC).
+func (p *Provider) TeardownDisk(ctx context.Context, ls *labv1.LabSession) error {
+	name := resourceName(ls)
+	dv := &cdiv1.DataVolume{ObjectMeta: metav1.ObjectMeta{Namespace: p.cfg.Namespace, Name: name}}
+	if err := p.cfg.Client.Delete(ctx, dv); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete datavolume %s: %w", name, err)
+	}
+	return nil
+}
+
+// Teardown deletes all session objects: compute, disk, and any snapshot.
+func (p *Provider) Teardown(ctx context.Context, ls *labv1.LabSession) error {
+	if err := p.TeardownCompute(ctx, ls); err != nil {
+		return err
+	}
+	if err := p.TeardownDisk(ctx, ls); err != nil {
+		return err
+	}
+	if ls.Status.SnapshotName != "" {
+		snap := &snapshotv1.VolumeSnapshot{ObjectMeta: metav1.ObjectMeta{
+			Namespace: p.cfg.Namespace,
+			Name:      ls.Status.SnapshotName,
+		}}
+		if err := p.cfg.Client.Delete(ctx, snap); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete snapshot %s: %w", ls.Status.SnapshotName, err)
+		}
+	}
+	return nil
+}
+
+// Snapshot creates a VolumeSnapshot of the session's disk PVC and returns its
+// name. The snapshot is not immediately ready — poll SnapshotReady.
+func (p *Provider) Snapshot(ctx context.Context, ls *labv1.LabSession) (string, error) {
+	dvName := resourceName(ls)
+	snapName := dvName + "-snap"
+	vscName := "longhorn-snapshot-vsc"
+
+	snap := &snapshotv1.VolumeSnapshot{
+		ObjectMeta: metav1.ObjectMeta{Name: snapName, Namespace: p.cfg.Namespace},
+		Spec: snapshotv1.VolumeSnapshotSpec{
+			Source: snapshotv1.VolumeSnapshotSource{
+				PersistentVolumeClaimName: ptr(dvName),
+			},
+			VolumeSnapshotClassName: ptr(vscName),
+		},
+	}
+	if err := p.cfg.Client.Create(ctx, snap); err != nil && !apierrors.IsAlreadyExists(err) {
+		return "", fmt.Errorf("create snapshot %s: %w", snapName, err)
+	}
+	return snapName, nil
+}
+
+// SnapshotReady returns true when the named VolumeSnapshot reports ReadyToUse.
+func (p *Provider) SnapshotReady(ctx context.Context, snapName string) (bool, error) {
+	snap := &snapshotv1.VolumeSnapshot{}
+	if err := p.cfg.Client.Get(ctx, client.ObjectKey{Namespace: p.cfg.Namespace, Name: snapName}, snap); err != nil {
+		return false, err
+	}
+	return snap.Status != nil && snap.Status.ReadyToUse != nil && *snap.Status.ReadyToUse, nil
 }
 
 // goldenPVCForScenario maps a scenario to its golden PVC name.
@@ -225,18 +286,32 @@ func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, n
 		srcNamespace = p.cfg.Namespace
 	}
 
+	var source *cdiv1.DataVolumeSource
+	if ls.Status.SnapshotName != "" {
+		// Resume from snapshot — restores exact disk state at pause time.
+		source = &cdiv1.DataVolumeSource{
+			Snapshot: &cdiv1.DataVolumeSourceSnapshot{
+				Namespace: p.cfg.Namespace,
+				Name:      ls.Status.SnapshotName,
+			},
+		}
+	} else {
+		// Fresh session — clone from golden PVC.
+		source = &cdiv1.DataVolumeSource{
+			PVC: &cdiv1.DataVolumeSourcePVC{
+				Namespace: srcNamespace,
+				Name:      goldenPVCName,
+			},
+		}
+	}
+
 	dv := &cdiv1.DataVolume{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.cfg.Namespace, Labels: labels},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, p.cfg.Client, dv, func() error {
 		dv.Labels = labels
 		dv.Spec = cdiv1.DataVolumeSpec{
-			Source: &cdiv1.DataVolumeSource{
-				PVC: &cdiv1.DataVolumeSourcePVC{
-					Namespace: srcNamespace,
-					Name:      goldenPVCName,
-				},
-			},
+			Source: source,
 			PVC: &corev1.PersistentVolumeClaimSpec{
 				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 				Resources: corev1.VolumeResourceRequirements{

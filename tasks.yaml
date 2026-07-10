@@ -7,6 +7,7 @@ includes:
   - setup: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/setup.yaml
   - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/vouch.yaml
   - uds-setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
+
 tasks:
   # ── Lint ─────────────────────────────────────────────────────────────────────
 
@@ -16,62 +17,478 @@ tasks:
       - description: Run golangci-lint
         cmd: golangci-lint run ./...
 
-  # ── Build packer VM images ────────────────────────────────────────────────────
-  # Builds base → playground-tools → playground-uds-core qcow2s.
-  # Full run takes 60+ min. Skip stages with SKIP_BASE/SKIP_TOOLS/SKIP_UDS_CORE=1.
+  # ── Build VM images ───────────────────────────────────────────────────────────
+  # Full packer run takes 60+ min. Pass skip=1 to skip image builds entirely,
+  # or skip individual tiers with skip_base/skip_tools/skip_uds_core.
 
   - name: build-images
     description: Build VM qcow2 images with packer (base → tools → uds-core)
     inputs:
+      skip:
+        description: Skip all packer builds (1 = skip)
+        default: "0"
       skip_base:
-        description: "Skip base image build (reuse existing output/base/lab-base.qcow2)"
+        description: Skip base image build
         default: "0"
       skip_tools:
-        description: "Skip tools image build"
+        description: Skip tools image build
         default: "0"
       skip_uds_core:
-        description: "Skip UDS Core image build"
+        description: Skip UDS Core image build
         default: "0"
     actions:
-      - description: Build packer images
-        dir: packer
+      - description: Generate packer SSH keypair if not present
         cmd: |
+          if [ ! -f packer/packer-key ]; then
+            echo "Generating packer SSH keypair..."
+            ssh-keygen -t ed25519 -f packer/packer-key -N "" -q
+          fi
+      - description: Build packer images
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping packer builds (skip=1)"
+            exit 0
+          fi
+          cd packer
           SKIP_BASE="${{ .inputs.skip_base }}" \
           SKIP_TOOLS="${{ .inputs.skip_tools }}" \
           SKIP_UDS_CORE="${{ .inputs.skip_uds_core }}" \
           ./build-images-qemu.sh
+        maxTotalSeconds: 7200
 
-  # ── Cluster lifecycle ─────────────────────────────────────────────────────────
-  # Wipes k3s, installs k3s + MetalLB + KubeVirt + UDS Core, deploys lab-platform,
-  # and optionally imports golden PVCs. Requires pre-built qcow2s for golden PVCs.
+  # ── Atomic cluster-setup steps ───────────────────────────────────────────────
+  # Each step is independently runnable. Composite tasks (cluster-up, dev)
+  # compose these. Pass skip=1 to any step to no-op it from a composite task.
 
-  - name: cluster-up
-    description: Wipe + rebuild k3s cluster, deploy all packages, import golden PVCs
+  - name: preflight
+    description: Verify required tools, KVM access, and KubeVirt package directory
     inputs:
-      skip_wipe:
-        description: "Skip k3s reinstall (redeploy packages only)"
-        default: "0"
-      skip_golden_pvc:
-        description: "Skip golden PVC import (run build-images first)"
+      kubevirt_pkg_dir:
+        description: Path to local KubeVirt package directory
+        default: $HOME/src/github.com/uds-packages/kubevirt
+    actions:
+      - description: Check tools, KVM, and KubeVirt dir
+        cmd: |
+          FAILED=0
+          for tool in kubectl zarf uds curl jq ip docker; do
+            command -v "$tool" >/dev/null 2>&1 || { echo "ERROR: missing required tool: $tool"; FAILED=1; }
+          done
+          ls /dev/kvm >/dev/null 2>&1 || { echo "ERROR: /dev/kvm not found — enable KVM in BIOS (AMD-V / Intel VT-x)"; FAILED=1; }
+          [ -d "${{ .inputs.kubevirt_pkg_dir }}" ] || { echo "ERROR: KubeVirt package dir not found: ${{ .inputs.kubevirt_pkg_dir }}"; FAILED=1; }
+          [ "$FAILED" = "0" ] && echo "Preflight passed" || exit 1
+
+  - name: wipe-k3s
+    description: Uninstall k3s if present
+    inputs:
+      skip:
+        description: Set to 1 to skip this step
         default: "0"
     actions:
-      - description: Setup cluster
+      - description: Uninstall k3s
         cmd: |
-          SKIP_WIPE="${{ .inputs.skip_wipe }}" \
-          SKIP_GOLDEN_PVC="${{ .inputs.skip_golden_pvc }}" \
-          BASE_QCOW2=packer/output/base/lab-base.qcow2 \
-          TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \
-          UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
-          ./scripts/dev-cluster-setup.sh
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping k3s wipe (skip=1)"
+            exit 0
+          fi
+          if [ -f /usr/local/bin/k3s-uninstall.sh ]; then
+            echo "Uninstalling k3s..."
+            sudo /usr/local/bin/k3s-uninstall.sh
+            sleep 3
+          else
+            echo "k3s not installed — nothing to wipe"
+          fi
+
+  - name: install-k3s
+    description: Install k3s with traefik and servicelb disabled
+    inputs:
+      skip:
+        description: Set to 1 to skip this step
+        default: "0"
+    actions:
+      - description: Install k3s and copy kubeconfig
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping k3s install (skip=1)"
+            exit 0
+          fi
+          # --disable=traefik  → avoids gateway-api CRD conflict with UDS Core
+          # --disable=servicelb → replaced by MetalLB for separate admin+tenant IPs
+          curl -sfL https://get.k3s.io | sh -s - --disable=traefik --disable=servicelb
+          mkdir -p "$HOME/.kube"
+          sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
+          sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
+        maxTotalSeconds: 300
+      - description: Wait for k3s node Ready
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then exit 0; fi
+          until kubectl get nodes >/dev/null 2>&1; do sleep 2; done
+          kubectl wait node --all --for=condition=Ready --timeout=120s
+          kubectl get nodes
+        maxTotalSeconds: 130
+
+  - name: install-metallb
+    description: Install MetalLB and configure IP pool (auto-detects host subnet)
+    inputs:
+      skip:
+        description: Set to 1 to skip this step
+        default: "0"
+      version:
+        description: MetalLB version
+        default: v0.14.9
+      range:
+        description: "Override MetalLB IP range (auto-detected from host IP if empty)"
+        default: ""
+    actions:
+      - description: Apply MetalLB manifests
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping MetalLB install (skip=1)"
+            exit 0
+          fi
+          kubectl apply -f "https://raw.githubusercontent.com/metallb/metallb/${{ .inputs.version }}/config/manifests/metallb-native.yaml"
+        maxTotalSeconds: 120
+      - description: Wait for MetalLB controller
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then exit 0; fi
+          kubectl wait -n metallb-system deployment/controller --for=condition=Available --timeout=120s
+          kubectl rollout status daemonset/speaker -n metallb-system --timeout=60s || true
+        maxTotalSeconds: 130
+      - description: Configure MetalLB IP pool
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then exit 0; fi
+          RANGE="${{ .inputs.range }}"
+          if [ -z "$RANGE" ]; then
+            LOCAL_IP=$(ip route get 8.8.8.8 2>/dev/null | grep -oP 'src \K[^ ]+' || true)
+            [ -n "$LOCAL_IP" ] || { echo "ERROR: cannot detect local IP — set range input: --with range=x.x.x.a-x.x.x.b"; exit 1; }
+            SUBNET=$(echo "$LOCAL_IP" | cut -d. -f1-3)
+            RANGE="${SUBNET}.200-${SUBNET}.250"
+          fi
+          echo "MetalLB pool: $RANGE"
+          kubectl apply -f - <<EOF
+          apiVersion: metallb.io/v1beta1
+          kind: IPAddressPool
+          metadata:
+            name: local-pool
+            namespace: metallb-system
+          spec:
+            addresses:
+            - ${RANGE}
+          ---
+          apiVersion: metallb.io/v1beta1
+          kind: L2Advertisement
+          metadata:
+            name: local-adv
+            namespace: metallb-system
+          EOF
+
+  - name: zarf-init
+    description: Initialize Zarf in the cluster
+    inputs:
+      skip:
+        description: Set to 1 to skip this step
+        default: "0"
+    actions:
+      - description: Run zarf init
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping zarf init (skip=1)"
+            exit 0
+          fi
+          zarf init --confirm
+        maxTotalSeconds: 600
+
+  - name: build-kubevirt
+    description: Build KubeVirt Zarf package in the KubeVirt package directory
+    inputs:
+      dir:
+        description: Path to KubeVirt package directory
+        default: $HOME/src/github.com/uds-packages/kubevirt
+      skip_if_exists:
+        description: Skip rebuild if a package tarball already exists (set to 1)
+        default: "0"
+    actions:
+      - description: Build KubeVirt package
+        cmd: |
+          cd "${{ .inputs.dir }}"
+          if [ "${{ .inputs.skip_if_exists }}" = "1" ]; then
+            EXISTING=$(ls zarf-package-kubevirt-amd64-*-upstream.tar.zst 2>/dev/null | tail -1)
+            if [ -n "$EXISTING" ]; then
+              echo "Existing package found ($EXISTING) — skipping rebuild"
+              exit 0
+            fi
+          fi
+          zarf package create . -f upstream --confirm --skip-sbom
+        maxTotalSeconds: 3600
+
+  - name: build-cdi
+    description: Build CDI Zarf package
+    actions:
+      - description: Build CDI package
+        cmd: |
+          cd packages/cdi
+          zarf package create . --confirm --skip-sbom
+        maxTotalSeconds: 600
+
+  - name: build-image
+    description: Build and save the lab-platform Docker image
+    inputs:
+      tag:
+        description: Docker image tag
+        default: ghcr.io/enxoco/uds-lab-platform:dev-local
+    actions:
+      - description: Build Docker image
+        cmd: docker build -t ${{ .inputs.tag }} .
+        maxTotalSeconds: 600
+      - description: Save image tarball for Zarf
+        cmd: docker save ${{ .inputs.tag }} -o lab-server.tar
+        maxTotalSeconds: 120
+
+  - name: build-lab-package
+    description: Build the uds-lab-platform Zarf package
+    actions:
+      - description: Build Zarf package
+        cmd: zarf package create . --confirm --skip-sbom
+        maxTotalSeconds: 600
+
+  - name: build-bundle
+    description: Build the UDS bundle from bundle/
+    actions:
+      - description: Create UDS bundle
+        cmd: uds create bundle/ --confirm
+        maxTotalSeconds: 600
+
+  - name: clear-operator-crds
+    description: |
+      Resolve CDI/KubeVirt Helm SSA field-manager conflicts on redeploy.
+      These operators claim .spec.versions on their own CRDs, conflicting with
+      Helm SSA on SKIP_WIPE=1 redeployments. Fix: delete the operator namespace
+      (stops the process) then force-adopt each CRD under the zarf field manager.
+      Golden PVCs and DataVolumes are preserved — no CRDs are deleted.
+      No-ops on a fresh cluster. Called automatically by deploy-bundle.
+    actions:
+      - description: Resolve CDI operator CRD conflict
+        maxTotalSeconds: 180
+        cmd: |
+          MANAGERS=$(kubectl get crd cdis.cdi.kubevirt.io \
+            -o jsonpath='{.metadata.managedFields[*].manager}' 2>/dev/null || echo "")
+          if echo "$MANAGERS" | grep -q "cdi-operator"; then
+            echo "cdi-operator conflict detected — stopping operator and force-adopting CRDs"
+            kubectl delete namespace cdi --wait=true --ignore-not-found=true
+            for crd in $(kubectl get crds 2>/dev/null | grep cdi.kubevirt.io | awk '{print $1}'); do
+              kubectl get crd "$crd" -o json | \
+                kubectl apply --server-side --force-conflicts --field-manager=zarf -f - 2>/dev/null || true
+            done
+            echo "CDI field manager conflict resolved — golden PVCs preserved"
+          else
+            echo "No CDI operator conflict — skipping"
+          fi
+      - description: Resolve KubeVirt operator CRD conflict
+        maxTotalSeconds: 180
+        cmd: |
+          MANAGERS=$(kubectl get crd kubevirts.kubevirt.io \
+            -o jsonpath='{.metadata.managedFields[*].manager}' 2>/dev/null || echo "")
+          if echo "$MANAGERS" | grep -q "virt-operator"; then
+            echo "virt-operator conflict detected — stopping operator and force-adopting CRDs"
+            kubectl delete namespace kubevirt --wait=true --ignore-not-found=true
+            for crd in $(kubectl get crds 2>/dev/null | grep kubevirt.io | awk '{print $1}'); do
+              kubectl get crd "$crd" -o json | \
+                kubectl apply --server-side --force-conflicts --field-manager=zarf -f - 2>/dev/null || true
+            done
+            echo "KubeVirt field manager conflict resolved"
+          else
+            echo "No KubeVirt operator conflict — skipping"
+          fi
+
+  - name: deploy-bundle
+    description: Deploy the latest UDS bundle tarball from bundle/
+    actions:
+      - task: clear-operator-crds
+      - description: Deploy bundle
+        cmd: |
+          BUNDLE=$(ls bundle/uds-bundle-uds-lab-platform-*.tar.zst 2>/dev/null | tail -1)
+          [ -n "$BUNDLE" ] || { echo "ERROR: no bundle found in bundle/ — run build-bundle first"; exit 1; }
+          echo "Deploying: $BUNDLE"
+          uds deploy "$BUNDLE" --confirm
+        maxTotalSeconds: 3600
+
+  - name: wait-kubevirt
+    description: Wait for KubeVirt to reach Available status
+    actions:
+      - description: Wait for KubeVirt Available
+        cmd: kubectl -n kubevirt wait kubevirt kubevirt --for=condition=Available --timeout=300s
+        maxTotalSeconds: 310
+
+  - name: wait-cdi
+    description: Wait for CDI to reach Deployed phase
+    actions:
+      - description: Poll CDI phase until Deployed
+        cmd: |
+          deadline=$(( $(date +%s) + 180 ))
+          while true; do
+            phase=$(kubectl get cdi cdi -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
+            [ "$phase" = "Deployed" ] && { echo "CDI Deployed"; break; }
+            [ "$(date +%s)" -gt "$deadline" ] && { echo "ERROR: CDI not Deployed after 3m — check: kubectl get pods -n cdi"; exit 1; }
+            printf "."
+            sleep 3
+          done
+          echo ""
+        maxTotalSeconds: 190
+
+  - name: patch-demo-routes
+    description: |
+      Exempt /demo and /api/demo-sessions from Istio authservice and JWT auth.
+      Pepr overwrites these policies on every Package CR reconciliation — re-run
+      after any Helm upgrade: uds run patch-demo-routes
+    inputs:
+      namespace:
+        description: Namespace containing the lab-platform Package CR
+        default: lab-platform
+    actions:
+      - description: Wait for authservice AuthorizationPolicy
+        cmd: |
+          NS="${{ .inputs.namespace }}"
+          deadline=$(( $(date +%s) + 120 ))
+          until kubectl get authorizationpolicy uds-lab-platform-authservice -n "$NS" >/dev/null 2>&1; do
+            [ "$(date +%s)" -gt "$deadline" ] && { echo "ERROR: timed out waiting for authservice policy"; exit 1; }
+            sleep 3
+          done
+          echo "uds-lab-platform-authservice ready"
+        maxTotalSeconds: 130
+      - description: Wait for jwt-authz AuthorizationPolicy
+        cmd: |
+          NS="${{ .inputs.namespace }}"
+          deadline=$(( $(date +%s) + 120 ))
+          until kubectl get authorizationpolicy uds-lab-platform-jwt-authz -n "$NS" >/dev/null 2>&1; do
+            [ "$(date +%s)" -gt "$deadline" ] && { echo "ERROR: timed out waiting for jwt-authz policy"; exit 1; }
+            sleep 3
+          done
+          echo "uds-lab-platform-jwt-authz ready"
+        maxTotalSeconds: 130
+      - description: Patch authservice policy to exclude demo routes
+        maxTotalSeconds: 30
+        cmd: |
+          kubectl patch authorizationpolicy uds-lab-platform-authservice \
+            -n "${{ .inputs.namespace }}" \
+            --type=json \
+            -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'
+      - description: Patch jwt-authz policy to exclude demo routes
+        maxTotalSeconds: 30
+        cmd: |
+          kubectl patch authorizationpolicy uds-lab-platform-jwt-authz \
+            -n "${{ .inputs.namespace }}" \
+            --type=json \
+            -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'
+
+  - name: populate-golden-pvcs
+    description: Import pre-built qcow2 images into golden PVCs (auto-skips if qcow2s not found)
+    inputs:
+      skip:
+        description: Set to 1 to force-skip import regardless of file presence
+        default: "0"
+      base_qcow2:
+        description: Path to base qcow2
+        default: packer/output/base/lab-base.qcow2
+      tools_qcow2:
+        description: Path to tools qcow2
+        default: packer/output/tools/lab-playground-tools.qcow2
+      uds_core_qcow2:
+        description: Path to UDS Core qcow2
+        default: packer/output/uds-core/lab-playground-uds-core.qcow2
+      namespace:
+        description: Namespace for golden PVCs
+        default: uds-lab-vms
+    actions:
+      - description: Import golden PVCs
+        maxTotalSeconds: 600
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping golden PVC import (skip=1)"
+            exit 0
+          fi
+          import_args=()
+          [ -f "${{ .inputs.base_qcow2 }}" ]     && import_args+=("BASE_QCOW2=${{ .inputs.base_qcow2 }}")
+          [ -f "${{ .inputs.tools_qcow2 }}" ]    && import_args+=("TOOLS_QCOW2=${{ .inputs.tools_qcow2 }}")
+          [ -f "${{ .inputs.uds_core_qcow2 }}" ] && import_args+=("UDS_CORE_QCOW2=${{ .inputs.uds_core_qcow2 }}")
+          if [ ${#import_args[@]} -eq 0 ]; then
+            echo "No qcow2 files found at expected paths — skipping golden PVC import"
+            echo "Build images first:  uds run build-images"
+            echo "VM provisioning will fail until golden PVCs are populated!"
+            exit 0
+          fi
+          env "${import_args[@]}" GOLDEN_NAMESPACE="${{ .inputs.namespace }}" \
+            ./scripts/create-golden-pvc.sh
+
+  - name: verify-cluster
+    description: Print cluster node and workload status summary
+    actions:
+      - description: Cluster status summary
+        cmd: |
+          kubectl get nodes
+          kubectl -n kubevirt get kubevirt kubevirt \
+            -o jsonpath='KubeVirt status: {.status.phase}{"\n"}' || true
+          echo "Non-running pods (if any):"
+          kubectl get pods -A | grep -v Running | grep -v Completed | grep -v NAME || true
+
+  # ── Composite cluster-setup task ─────────────────────────────────────────────
+  # Replaces scripts/dev-cluster-setup.sh. Composes the atomic tasks above.
+  # k3s install requires sudo — run `sudo -v` before starting if your sudo
+  # session has timed out.
+
+  - name: cluster-up
+    description: |
+      Full cluster setup: preflight, k3s, MetalLB, zarf init, KubeVirt, bundle deploy, demo patch, golden PVCs, verify.
+      SKIP_WIPE=1  — keep existing k3s, skip reinstall (also skips MetalLB and zarf init).
+      SKIP_GOLDEN_PVC=1 — force-skip golden PVC import (default: auto-imports if qcow2s present).
+    inputs:
+      SKIP_WIPE:
+        description: Skip k3s wipe and reinstall (1 = skip)
+        default: "0"
+      SKIP_GOLDEN_PVC:
+        description: Force-skip golden PVC import (default 0 = auto-import if qcow2s exist)
+        default: "0"
+      KUBEVIRT_PKG_DIR:
+        description: Path to local KubeVirt package directory
+        default: $HOME/src/github.com/uds-packages/kubevirt
+    actions:
+      - task: preflight
+        with:
+          kubevirt_pkg_dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
+      - task: wipe-k3s
+        with:
+          skip: ${{ .inputs.SKIP_WIPE }}
+      - task: install-k3s
+        with:
+          skip: ${{ .inputs.SKIP_WIPE }}
+      - task: install-metallb
+        with:
+          skip: ${{ .inputs.SKIP_WIPE }}
+      - task: zarf-init
+        with:
+          skip: ${{ .inputs.SKIP_WIPE }}
+      - task: build-kubevirt
+        with:
+          dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
+          skip_if_exists: ${{ .inputs.SKIP_WIPE }}
+      - task: build-cdi
+      - task: build-image
+      - task: build-lab-package
+      - task: build-bundle
+      - task: deploy-bundle
+      - task: wait-kubevirt
+      - task: wait-cdi
+      - task: patch-demo-routes
+      - task: populate-golden-pvcs
+        with:
+          skip: ${{ .inputs.SKIP_GOLDEN_PVC }}
+      - task: verify-cluster
 
   # ── CoreDNS patch ─────────────────────────────────────────────────────────────
-  # Overrides *.uds.dev in CoreDNS NodeHosts so in-cluster pods/VMs reach the
-  # correct MetalLB gateway instead of the public 127.0.0.1 wildcard.
 
   - name: patch-coredns
     description: Patch CoreDNS to route *.uds.dev to MetalLB gateways
     actions:
       - description: Patch CoreDNS NodeHosts
+        maxTotalSeconds: 180
         cmd: ./scripts/patch-coredns.sh
 
   # ── Keycloak test user ────────────────────────────────────────────────────────
@@ -79,19 +496,16 @@ tasks:
   - name: create-test-user
     description: Create test Keycloak user (doug / unicorn123!@#UN) in /UDS Core/Admin
     actions:
-      - task: setup:keycloak-user
+      - task: uds-setup:keycloak-user
         with:
           group: "/UDS Core/Admin"
 
   # ── nginx SNI proxy ───────────────────────────────────────────────────────────
-  # Routes *.admin.uds.dev → admin MetalLB gateway, everything else → tenant.
-  # Required for access from remote machines (Tailscale etc.).
-  # IPs are read dynamically from k8s LoadBalancer services — no hardcoding.
 
   - name: start-proxy
     description: Start nginx SNI reverse proxy (auto-detects MetalLB IPs)
     actions:
-      - description: Generate nginx.conf + start proxy
+      - description: Generate nginx.conf and start proxy
         cmd: |
           export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
           ADMIN_IP=$(kubectl get svc admin-ingressgateway -n istio-admin-gateway \
@@ -99,7 +513,7 @@ tasks:
           TENANT_IP=$(kubectl get svc tenant-ingressgateway -n istio-tenant-gateway \
             --request-timeout=30s -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
           if [ -z "$ADMIN_IP" ] || [ -z "$TENANT_IP" ]; then
-            echo "WARNING: Could not detect gateway IPs — run ./scripts/start-proxy.sh manually after cluster is up"
+            echo "WARNING: could not detect gateway IPs — run ./scripts/start-proxy.sh manually after cluster is up"
             exit 0
           fi
           echo "Admin: $ADMIN_IP  Tenant: $TENANT_IP"
@@ -127,77 +541,159 @@ tasks:
       - description: Stop nginx proxy
         cmd: docker compose -f hack/proxy/docker-compose.yaml down
 
-  # ── Fast redeploy (no cluster wipe) ─────────────────────────────────────────
-  # Rebuilds the Docker image + Zarf package + bundle, redeploys.
-  # Use when iterating on operator or server code without needing a full cluster
-  # wipe. Does NOT rebuild packer images or golden PVCs.
+  # ── Fast redeploy (no cluster wipe) ──────────────────────────────────────────
+  # Rebuilds image + package + bundle, deploys, re-applies demo route patch.
+  # Use when iterating on server or operator code without wiping the cluster.
 
   - name: redeploy
-    description: "Rebuild + redeploy operator/server image without wiping the cluster"
+    description: Rebuild and redeploy lab-platform without wiping the cluster
     actions:
-      - description: Rebuild Docker image
-        cmd: docker build -t ghcr.io/enxoco/uds-lab-platform:dev-local .
-
-      - description: Rebuild Zarf package + bundle + deploy
+      - task: build-image
+      - task: build-lab-package
+      - task: build-bundle
+      - task: deploy-bundle
+      - task: patch-demo-routes
+      - description: Restart deployments
         cmd: |
-          LOG=/tmp/uds-dev-redeploy.log
-          echo "▶ Streaming output to $LOG — tail -f $LOG in another terminal"
-          (
-            zarf package create . --confirm --skip-sbom
-            uds create bundle/ --confirm
-            BUNDLE=$(ls bundle/uds-bundle-uds-lab-platform-*.tar.zst | tail -1)
-            uds deploy "$BUNDLE" --confirm
-            kubectl rollout restart deployment/lab-operator deployment/lab-platform \
-              -n lab-platform
-          ) 2>&1 | tee "$LOG"
+          kubectl rollout restart deployment/lab-operator deployment/lab-platform -n lab-platform
+          echo ""
+          echo "Redeploy complete."
+          echo "  Logs: kubectl logs -n lab-platform -l app=lab-operator -f"
+        maxTotalSeconds: 120
 
-      - description: Done
+  # ── Smoke test ───────────────────────────────────────────────────────────────
+  # Run after every deploy to catch broken state before the user hits it.
+  # Exits non-zero on any failure so CI and uds run dev surface problems early.
+
+  - name: smoke-test
+    description: Verify the deployed stack is healthy (golden PVCs, auth patches, platform pod)
+    actions:
+      - description: Check golden PVCs are Succeeded
+        maxTotalSeconds: 30
+        cmd: |
+          FAILED=0
+          NS="uds-lab-vms"
+          for pvc in golden-base golden-tools golden-uds-core; do
+            phase=$(kubectl get datavolume "$pvc" -n "$NS" \
+              -o jsonpath='{.status.phase}' 2>/dev/null || echo "missing")
+            if [ "$phase" = "Succeeded" ]; then
+              echo "  ✔ $pvc ($phase)"
+            else
+              echo "  ✘ $pvc — phase: $phase (VMs will not provision until Succeeded)"
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" = "0" ] || { echo ""; echo "Fix: uds run populate-golden-pvcs --with skip=0"; exit 1; }
+      - description: Check AuthorizationPolicy demo-route patches
+        maxTotalSeconds: 30
+        cmd: |
+          FAILED=0
+          NS="lab-platform"
+          for pol in uds-lab-platform-authservice uds-lab-platform-jwt-authz; do
+            has_to=$(kubectl get authorizationpolicy "$pol" -n "$NS" \
+              -o jsonpath='{.spec.rules[0].to}' 2>/dev/null || echo "")
+            if [ -n "$has_to" ]; then
+              echo "  ✔ $pol has notPaths exemption"
+            else
+              echo "  ✘ $pol missing notPaths — /demo and /api/demo-sessions will require auth"
+              FAILED=1
+            fi
+          done
+          [ "$FAILED" = "0" ] || { echo "Fix: uds run patch-demo-routes"; exit 1; }
+      - description: Check lab-platform pod is Running
+        maxTotalSeconds: 30
+        cmd: |
+          NS="lab-platform"
+          NOT_RUNNING=$(kubectl get pods -n "$NS" -l app=lab-platform \
+            --field-selector=status.phase!=Running \
+            -o name 2>/dev/null | head -5)
+          RUNNING=$(kubectl get pods -n "$NS" -l app=lab-platform \
+            --field-selector=status.phase=Running \
+            -o name 2>/dev/null | head -1)
+          if [ -n "$RUNNING" ] && [ -z "$NOT_RUNNING" ]; then
+            echo "  ✔ lab-platform pod Running"
+          else
+            echo "  ✘ lab-platform pod not Running"
+            kubectl get pods -n "$NS" -l app=lab-platform 2>/dev/null || true
+            exit 1
+          fi
+      - description: Check authservice is running without OIDC errors
+        maxTotalSeconds: 30
+        cmd: |
+          # JWKS is fetched lazily on first SSO request, not at startup — don't
+          # check for that log line. Instead verify the pod is stable and has no
+          # OIDC configuration errors in recent logs.
+          RESTARTS=$(kubectl get pod -n authservice \
+            -l app.kubernetes.io/name=authservice \
+            -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}' 2>/dev/null || echo "unknown")
+          ERRORS=$(kubectl logs -n authservice deployment/authservice --since=120s 2>/dev/null \
+            | grep -i "error.*oidc\|failed.*fetch\|failed.*jwk\|failed.*openid" || true)
+          if [ "$RESTARTS" = "0" ] && [ -z "$ERRORS" ]; then
+            echo "  ✔ authservice running (restarts: 0, no OIDC errors)"
+          elif [ -n "$ERRORS" ]; then
+            echo "  ✘ authservice has OIDC errors — JWT verification will fail"
+            echo "$ERRORS"
+            echo "    Fix: ./scripts/patch-coredns.sh"
+            exit 1
+          else
+            echo "  ⚠ authservice restarts: $RESTARTS — may indicate DNS/Keycloak issue"
+            echo "    Check: kubectl logs -n authservice deploy/authservice"
+          fi
+
+  # ── Full e2e dev workflow ─────────────────────────────────────────────────────
+  # Composes: build-images + cluster-up + patch-coredns + start-proxy + test user.
+  #
+  # Common invocations:
+  #   uds run dev                              # full e2e from scratch
+  #   uds run dev --with SKIP_IMAGES=1         # skip packer, rebuild cluster
+  #   uds run dev --with SKIP_WIPE=1           # keep k3s, redeploy packages
+  #   uds run dev --with SKIP_IMAGES=1 --with SKIP_WIPE=1
+
+  - name: dev
+    description: "Full e2e: build VM images, set up cluster, deploy platform, configure access"
+    inputs:
+      SKIP_IMAGES:
+        description: Skip all packer image builds (1 = skip)
+        default: "0"
+      SKIP_BASE:
+        description: Skip base image build
+        default: "0"
+      SKIP_TOOLS:
+        description: Skip tools image build
+        default: "0"
+      SKIP_UDS_CORE:
+        description: Skip UDS Core image build
+        default: "0"
+      SKIP_WIPE:
+        description: Skip k3s wipe and reinstall (1 = skip)
+        default: "0"
+      SKIP_GOLDEN_PVC:
+        description: Force-skip golden PVC import (default 0 = auto-import if qcow2s exist)
+        default: "0"
+    actions:
+      - task: build-images
+        with:
+          skip: ${{ .inputs.SKIP_IMAGES }}
+          skip_base: ${{ .inputs.SKIP_BASE }}
+          skip_tools: ${{ .inputs.SKIP_TOOLS }}
+          skip_uds_core: ${{ .inputs.SKIP_UDS_CORE }}
+      - task: cluster-up
+        with:
+          SKIP_WIPE: ${{ .inputs.SKIP_WIPE }}
+          SKIP_GOLDEN_PVC: ${{ .inputs.SKIP_GOLDEN_PVC }}
+      - task: patch-coredns
+      - task: start-proxy
+      - task: create-test-user
+      - task: smoke-test
+      - description: Dev environment ready
         cmd: |
           echo ""
           echo "╔══════════════════════════════════════════════════════════╗"
-          echo "  Redeploy complete"
-          echo "  Check operator: kubectl logs -n lab-platform -l app=lab-operator -f"
+          echo "  UDS Lab Platform — dev environment ready"
+          echo ""
+          echo "  UI:    https://lab.uds.dev"
+          echo "  Admin: https://keycloak.admin.uds.dev"
+          echo ""
+          echo "  Test user: doug / unicorn123!@#UN"
+          echo "  Group:     /UDS Core/Admin"
           echo "╚══════════════════════════════════════════════════════════╝"
-
-  # ── Full e2e dev workflow ─────────────────────────────────────────────────────
-  # Runs the full local dev setup end to end.
-  #
-  # Skip flags (pass as --set KEY=VALUE):
-  #   SKIP_BASE=1        skip base packer build (reuse existing qcow2)
-  #   SKIP_TOOLS=1       skip tools packer build
-  #   SKIP_UDS_CORE=1    skip UDS Core packer build
-  #   SKIP_IMAGES=1      skip all packer builds (use existing qcow2s)
-  #   SKIP_WIPE=1        skip k3s reinstall (redeploy packages only)
-  #
-  # Examples:
-  #   uds run dev                            # full e2e from scratch
-  #   uds run dev --with SKIP_IMAGES=1        # skip packer, just rebuild cluster
-  #   uds run dev --with SKIP_WIPE=1         # keep k3s, redeploy packages + pvcs
-
-  - name: dev
-    description: "Full e2e: build VM images, setup cluster, deploy platform, configure access"
-    inputs:
-      SKIP_IMAGES:
-        description: "Skip all packer image builds (use existing qcow2s)"
-        default: "0"
-      SKIP_BASE:
-        description: "Skip base image build"
-        default: "0"
-      SKIP_TOOLS:
-        description: "Skip tools image build"
-        default: "0"
-      SKIP_UDS_CORE:
-        description: "Skip UDS Core image build"
-        default: "0"
-      SKIP_WIPE:
-        description: "Skip k3s reinstall"
-        default: "0"
-    actions:
-      - description: Run full e2e via dev.sh
-        cmd: |
-          SKIP_IMAGES="${{ .inputs.SKIP_IMAGES }}" \
-          SKIP_WIPE="${{ .inputs.SKIP_WIPE }}" \
-          SKIP_BASE="${{ .inputs.SKIP_BASE }}" \
-          SKIP_TOOLS="${{ .inputs.SKIP_TOOLS }}" \
-          SKIP_UDS_CORE="${{ .inputs.SKIP_UDS_CORE }}" \
-          ./scripts/dev.sh

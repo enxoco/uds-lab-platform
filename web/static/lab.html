@@ -13,6 +13,7 @@
     <span id="scenario-title" style="color:var(--text-muted);font-size:13px;"></span>
     <span style="flex:1"></span>
     <span class="timer" id="timer">--:--</span>
+    <button class="btn btn-primary" id="resume-btn" onclick="resumeLab()" style="display:none;" title="Resume your VM from where you left off">Resume</button>
     <button class="btn btn-danger" id="end-btn" onclick="confirmEnd()">End Lab</button>
   </nav>
 
@@ -37,12 +38,20 @@
 
   <!-- Confirm dialog -->
   <div id="confirm-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:100;align-items:center;justify-content:center;">
-    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:360px;width:90%;display:flex;flex-direction:column;gap:16px;">
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:28px;max-width:380px;width:90%;display:flex;flex-direction:column;gap:16px;">
       <div style="font-weight:600;font-size:16px;">End this lab?</div>
-      <div style="color:var(--text-muted);font-size:13px;">The VM will be destroyed and your progress will be lost.</div>
-      <div style="display:flex;gap:8px;justify-content:flex-end;">
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <button class="btn btn-secondary" style="justify-content:flex-start;text-align:left;flex-direction:column;align-items:flex-start;padding:12px 16px;gap:2px;" onclick="pauseLab()">
+          <span style="font-weight:600;">Save &amp; Exit</span>
+          <span style="font-size:12px;color:var(--text-muted);font-weight:400;">Snapshot your VM — resume exactly where you left off</span>
+        </button>
+        <button class="btn btn-danger" style="justify-content:flex-start;text-align:left;flex-direction:column;align-items:flex-start;padding:12px 16px;gap:2px;" onclick="endLab()">
+          <span style="font-weight:600;">Exit &amp; Discard</span>
+          <span style="font-size:12px;color:rgba(255,255,255,0.7);font-weight:400;">Destroy the VM — progress will be lost</span>
+        </button>
+      </div>
+      <div style="display:flex;justify-content:flex-end;">
         <button class="btn btn-ghost" onclick="document.getElementById('confirm-overlay').style.display='none'">Cancel</button>
-        <button class="btn btn-danger" onclick="endLab()">End Lab</button>
       </div>
     </div>
   </div>
@@ -196,6 +205,8 @@
           startTimer();
         }
 
+        const resumeBtn = document.getElementById('resume-btn');
+
         if (sess.status === 'ready') {
           clearInterval(pollInterval);
           labReady = true;
@@ -207,9 +218,18 @@
           if (sess.browser_enabled) {
             document.getElementById('browser-btn').style.display = 'inline-flex';
           }
+          resumeBtn.style.display = 'none';
           showStep(currentStep); // re-render to enable nav buttons
           addTab(); // open first tab
           if (sess.browser_enabled) startServicesPoll();
+        } else if (sess.status === 'paused') {
+          clearInterval(pollInterval);
+          labReady = false;
+          document.getElementById('terminal-status').textContent = 'Paused — resume to continue';
+          document.getElementById('end-btn').style.display = 'none';
+          resumeBtn.style.display = 'inline-flex';
+          resumeBtn.disabled = false;
+          resumeBtn.textContent = 'Resume';
         } else {
           document.getElementById('loading-text').textContent =
             'Provisioning lab environment… (this takes ~60–90 seconds)';
@@ -494,6 +514,25 @@
       clearInterval(servicesPollInterval);
       await fetch(`/api/sessions/${SESSION}`, { method: 'DELETE' }).catch(() => {});
       location.href = '/';
+    }
+
+    async function pauseLab() {
+      document.getElementById('confirm-overlay').style.display = 'none';
+      document.getElementById('teardown-overlay').style.display = 'flex';
+      document.querySelector('#teardown-overlay div:last-child').textContent = 'Saving your VM snapshot…';
+      clearInterval(timerInterval);
+      clearInterval(pollInterval);
+      clearInterval(servicesPollInterval);
+      await fetch(`/api/sessions/${SESSION}/pause`, { method: 'POST' }).catch(() => {});
+      location.href = '/';
+    }
+
+    async function resumeLab() {
+      document.getElementById('resume-btn').disabled = true;
+      document.getElementById('resume-btn').textContent = 'Resuming…';
+      await fetch(`/api/sessions/${SESSION}/resume`, { method: 'POST' }).catch(() => {});
+      document.getElementById('terminal-status').textContent = 'Provisioning VM…';
+      // Poll will re-enable terminal when VM is ready
     }
 
     init();
