@@ -1,13 +1,18 @@
-# Step 1 – Clone and explore zarf.yaml
+# Step 1 – Explore the reference package
 
 UDS Core is already running on this cluster. Your job in this lab is to understand how a real UDS package is structured, then deploy it.
 
 The [UDS Reference Package](https://github.com/uds-packages/reference-package) is the canonical example maintained by Defense Unicorns. It's the standard ISVs follow when building UDS-compatible packages.
 
-## Clone the repo
+The repo has been pre-cloned for you. Move into it:
 
 ```
-git clone --depth 1 https://github.com/uds-packages/reference-package /root/reference-package && cd /root/reference-package
+cd /root/reference-package
+```
+
+In your own environment you'd clone it with:
+```
+git clone --depth 1 https://github.com/uds-packages/reference-package
 ```
 
 ## What's in the repo

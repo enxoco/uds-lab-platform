@@ -1,0 +1,32 @@
+title: "Build Your Own UDS Package: Python App to Deployment"
+description: "Author every layer yourself: Helm chart, UDS Package CR, zarf.yaml, bundle, and tasks.yaml. A Python Flask app is pre-containerized and ready to package. Deploy it to a live UDS Core cluster with uds run dev."
+duration: 60
+difficulty: intermediate
+browser: true
+image: uds-core
+size: medium
+tags:
+  - uds
+  - zarf
+  - helm
+  - python
+  - docker
+steps:
+  - title: "The app: Python Flask on port 8080"
+    text: steps/1-meet-the-app.md
+    verify: verify/step1.sh
+  - title: "Write the Helm chart"
+    text: steps/2-helm-chart.md
+    verify: verify/step2.sh
+  - title: "The UDS Package CR: network and mesh"
+    text: steps/3-uds-package-cr.md
+    verify: verify/step3.sh
+  - title: "Write zarf.yaml"
+    text: steps/4-zarf-yaml.md
+    verify: verify/step4.sh
+  - title: "Bundle and tasks"
+    text: steps/5-bundle-tasks.md
+    verify: verify/step5.sh
+  - title: "Deploy and verify"
+    text: steps/6-deploy.md
+    verify: verify/step6.sh

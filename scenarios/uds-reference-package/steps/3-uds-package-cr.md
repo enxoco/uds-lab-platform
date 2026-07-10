@@ -1,8 +1,6 @@
 # Step 3 – The UDS Package CR
 
-The UDS Package CR is what makes a Zarf package a *UDS* package. Without it, your app deploys but gets no ingress, no network access, no SSO, and no monitoring.
-
-The Pepr operator watches for `kind: Package` resources and generates all the mesh plumbing automatically.
+The `Package` CR is what makes a Zarf package a *UDS* package. Without it, your app deploys but gets no external access, no network policies, no SSO, and no monitoring. Pepr watches for `kind: Package` resources and generates all the Kubernetes and Istio plumbing automatically.
 
 ## Read the CR
 
@@ -10,47 +8,105 @@ The Pepr operator watches for `kind: Package` resources and generates all the me
 cat chart/templates/uds-package.yaml
 ```
 
-The CR has three major sections:
+The CR has four major sections:
+
+---
+
+### `network.serviceMesh`
+
+```yaml
+serviceMesh:
+  mode: ambient
+```
+
+UDS Core uses Istio **ambient mesh** — mTLS, traffic policy, and observability run at the node level via ztunnel rather than as per-pod sidecar containers. The practical effect: your pod shows `1/1` READY (not `2/2`) because no Istio proxy is injected. The mesh is still fully active; it's just invisible to the pod.
+
+---
 
 ### `network.expose`
 
-Tells Pepr to create an Istio VirtualService routing external traffic to your service. Each entry maps:
-- `host` → the subdomain (`reference-package` → `reference-package.uds.dev`)
-- `gateway: tenant` → routes through the user-facing Istio gateway (use `admin` for internal dashboards like Grafana, Keycloak admin)
-- `targetPort` → the container port, not the Service port
+```yaml
+expose:
+  - service: reference-package
+    selector:
+      app: reference-package
+    gateway: tenant
+    host: reference-package
+    port: 8080
+    uptime:
+      checks:
+        paths:
+          - /health
+```
+
+Pepr reads this and creates an Istio `VirtualService` routing external HTTPS traffic from `reference-package.uds.dev` to your pod. The fields map to:
+- `host: reference-package` → `reference-package.uds.dev` (domain suffix appended from cluster config)
+- `gateway: tenant` → routes through the user-facing Istio ingress (use `admin` for internal dashboards like Grafana)
+- `port: 8080` → the **container** port (matched to the Service's `targetPort`, not the Service port)
+- `uptime.checks.paths` → Pepr creates uptime checks against `reference-package.uds.dev/health`
+
+---
 
 ### `network.allow`
 
-Everything is **default-deny**. Every network flow your app needs must be declared explicitly. Common patterns:
+**Everything is default-deny.** UDS Core installs a cluster-wide deny policy that blocks all pod-to-pod traffic unless explicitly allowed. Every network flow must be declared here. The reference package declares:
 
-```yaml
-# Reach Postgres in another namespace
-- direction: Egress
-  selector:
-    app: reference-package
-  remoteNamespace: postgres
-  remoteSelector:
-    app: postgres-operator
-  port: 5432
+| Rule | Direction | Purpose |
+|------|-----------|---------|
+| `IntraNamespace` | Ingress + Egress | Communication between pods in the same namespace |
+| Postgres | Egress | App → postgres-operator in the `postgres` namespace on port 5432 |
+| Keycloak | Egress | App → Keycloak in `keycloak` namespace on port 8080 |
+| Tenant gateway | Egress | App → tenant gateway for OIDC token validation |
 
-# Reach the K8s API
-- direction: Egress
-  remoteGenerated: KubeAPI
-```
+The comment `# Custom rules for unanticipated scenarios` with `additionalNetworkAllow` shows how bundle operators can inject extra rules at deploy time via Helm overrides — without changing the package.
+
+---
 
 ### `sso`
 
-When `sso.enabled: true`, Pepr registers a Keycloak client automatically. Your app receives the client credentials in the secret named by `secretName`. No manual Keycloak configuration needed.
+```yaml
+sso:
+  - name: Reference Package Login
+    clientId: uds-reference-package
+    secretName: reference-package-sso
+    secretTemplate:
+      KEYCLOAK_URL: "https://sso.{{ .Values.domain }}/realms/uds"
+      KEYCLOAK_CLIENT_ID: "clientField(clientId)"
+      KEYCLOAK_CLIENT_SECRET: "clientField(secret)"
+```
 
-## Compare to a live example
+When Pepr reconciles this, it:
+1. Registers a Keycloak OIDC client automatically (no manual Keycloak configuration)
+2. Creates a Kubernetes Secret named `reference-package-sso` in the same namespace
+3. Populates the secret using `secretTemplate` — `clientField(clientId)` resolves to the actual client ID, `clientField(secret)` to the generated client secret
 
-Pepr already generated VirtualServices for UDS Core itself. See the existing ones:
+Your app reads credentials from this secret. No hardcoded values, no manual Keycloak admin steps.
+
+---
+
+### `monitor`
+
+```yaml
+monitor:
+  - selector:
+      app: reference-package
+    targetPort: 8080
+    portName: http
+    path: /metrics
+    kind: ServiceMonitor
+```
+
+Pepr creates a Prometheus `ServiceMonitor` targeting `/metrics` on your pod. UDS Core's Prometheus instance picks it up automatically. No manual ServiceMonitor creation needed.
+
+## Compare to live cluster resources
+
+Pepr already generated VirtualServices for UDS Core itself:
 
 ```
 uds zarf tools kubectl get virtualservices -A
 ```
 
-You'll see VirtualServices for Keycloak, the admin gateway, and the tenant gateway. The **SSO (Keycloak)** service chip at the top of this page opens Keycloak in the VM browser — that VirtualService was generated by Pepr from UDS Core's own Package CR, the same mechanism that will wire up `reference-package.uds.dev` after you deploy.
+You'll see VirtualServices for Keycloak (`sso.admin.uds.dev`), the admin gateway, and the tenant gateway — all generated by Pepr from UDS Core's own Package CRs.
 
 ## Verify
 
@@ -58,4 +114,4 @@ You'll see VirtualServices for Keycloak, the admin gateway, and the tenant gatew
 uds zarf tools kubectl get virtualservices -A --no-headers | wc -l
 ```
 
-Note the count — you'll verify it increases after deploy in step 5.
+Note the count. You'll verify it increases after deploy in step 5.
