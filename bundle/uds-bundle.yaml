@@ -59,8 +59,8 @@ packages:
               value: 1
 
   - name: kubevirt
-    path: ../../../uds-packages/kubevirt
-    ref: dev
+    repository: ghcr.io/uds-packages/kubevirt
+    ref: v1.8.4-uds.1-upstream
     overrides:
       kubevirt:
         uds-kubevirt-config:
