@@ -131,9 +131,9 @@ func (m *Manager) MarkStepComplete(ctx context.Context, id, step string) error {
 }
 
 // All returns all LabSessions in the manager's namespace.
-func (m *Manager) All() []*Session {
+func (m *Manager) All(ctx context.Context) []*Session {
 	list := &labv1.LabSessionList{}
-	if err := m.client.List(context.Background(), list, client.InNamespace(m.namespace)); err != nil {
+	if err := m.client.List(ctx, list, client.InNamespace(m.namespace)); err != nil {
 		return nil
 	}
 	out := make([]*Session, len(list.Items))
@@ -144,9 +144,9 @@ func (m *Manager) All() []*Session {
 }
 
 // Get reads the current LabSession CR state and maps it to a Session.
-func (m *Manager) Get(id string) (*Session, bool) {
+func (m *Manager) Get(ctx context.Context, id string) (*Session, bool) {
 	ls := &labv1.LabSession{}
-	if err := m.client.Get(context.Background(), client.ObjectKey{
+	if err := m.client.Get(ctx, client.ObjectKey{
 		Name:      id,
 		Namespace: m.namespace,
 	}, ls); err != nil {
@@ -174,13 +174,28 @@ func (m *Manager) GetActive(ctx context.Context, clientID string) (*Session, boo
 	return nil, false
 }
 
-// Delete deletes the LabSession CR. Owner references cascade to VMI/Service/NP.
+// Delete hard-deletes the LabSession CR immediately (bypasses the 30-day
+// history window). Prefer Expire for user-visible delete operations so the CSM
+// dashboard retains completed-step history.
 func (m *Manager) Delete(ctx context.Context, id string) error {
 	ls := &labv1.LabSession{}
 	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
 		return fmt.Errorf("session %q not found: %w", id, err)
 	}
 	return m.client.Delete(ctx, ls)
+}
+
+// Expire sets ExpiresAt to now, triggering the operator to tear down the VM
+// while retaining the CR so the CSM dashboard can read completed steps for up
+// to 30 days. This is the preferred delete path for user-visible operations.
+func (m *Manager) Expire(ctx context.Context, id string) error {
+	ls := &labv1.LabSession{}
+	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
+		return fmt.Errorf("session %q not found: %w", id, err)
+	}
+	patch := client.MergeFrom(ls.DeepCopy())
+	ls.Spec.ExpiresAt = metav1.Now()
+	return m.client.Patch(ctx, ls, patch)
 }
 
 // Pause sets Spec.Paused = true, triggering the operator's snapshot-and-suspend flow.

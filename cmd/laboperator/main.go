@@ -7,7 +7,7 @@ package main
 import (
 	"io/fs"
 	"os"
-	"text/template"
+	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template -- renders shell scripts, not HTML
 
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"

@@ -55,7 +55,13 @@ type server struct {
 	aeGroup     string
 	hmacKey     []byte
 	serverNS    string
+	ctx         context.Context
 }
+
+const (
+	maxBodyBytes           = 1 << 20 // 1 MiB — cap on forwarded VM request bodies
+	maxDemoTokenExpiryHours = 8760   // 1 year
+)
 
 // demoTokenRecord is one entry in the lab-demo-tokens ConfigMap.
 type demoTokenRecord struct {
@@ -72,7 +78,10 @@ var errInvalidToken = errors.New("invalid token")
 var errExpiredToken = errors.New("token expired")
 
 func main() {
-	ttlMinutes, _ := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
+	ttlMinutes, err := strconv.Atoi(envOr("SESSION_TTL_MINUTES", "60"))
+	if err != nil {
+		log.Fatalf("SESSION_TTL_MINUTES is not a valid integer: %v", err)
+	}
 	vmNamespace := envOr("VM_NAMESPACE", "uds-lab-vms")
 	serverNS := envOr("SERVER_NAMESPACE", vmNamespace)
 	port := envOr("PORT", "8080")
@@ -128,6 +137,9 @@ func main() {
 
 	mgr := session.NewManager(k8s, vmNamespace, time.Duration(ttlMinutes)*time.Minute, scenariosFS)
 
+	srvCtx, srvCancel := context.WithCancel(context.Background())
+	defer srvCancel()
+
 	labCfg := loadConfig()
 	srv := &server{
 		mgr:         mgr,
@@ -139,6 +151,7 @@ func main() {
 		aeGroup:     labCfg.AEGroup,
 		hmacKey:     hmacKey,
 		serverNS:    serverNS,
+		ctx:         srvCtx,
 	}
 
 	mux := http.NewServeMux()
@@ -174,18 +187,18 @@ func main() {
 	mux.HandleFunc("GET /ide/{id}", srv.idePage)
 	mux.HandleFunc("/ide-api/{id}/", srv.ideFileProxy)
 
-	// Admin routes
-	mux.HandleFunc("GET /api/admin/sessions", srv.adminListSessions)
-	mux.HandleFunc("DELETE /api/admin/sessions/{id}", srv.adminDeleteSession)
-	mux.HandleFunc("GET /api/admin/csm", srv.adminCSM)
-	mux.HandleFunc("GET /admin", srv.adminPage)
-	mux.HandleFunc("GET /admin/csm", srv.csmDashboard)
+	// Admin routes — protected by the same requireAE middleware as demo token management.
+	mux.HandleFunc("GET /api/admin/sessions", srv.requireAE(srv.adminListSessions))
+	mux.HandleFunc("DELETE /api/admin/sessions/{id}", srv.requireAE(srv.adminDeleteSession))
+	mux.HandleFunc("GET /api/admin/csm", srv.requireAE(srv.adminCSM))
+	mux.HandleFunc("GET /admin", srv.requireAE(srv.adminPage))
+	mux.HandleFunc("GET /admin/csm", srv.requireAE(srv.csmDashboard))
 
 	// Static file server (catch-all)
 	mux.Handle("/", http.FileServerFS(staticFS))
 
 	log.Printf("labserver listening on :%s (vm-namespace=%s)", port, vmNamespace)
-	log.Fatal(http.ListenAndServe(":"+port, mux))
+	log.Fatal(http.ListenAndServe(":"+port, mux)) // nosemgrep: go.lang.security.audit.net.use-tls.use-tls -- TLS terminated by Istio mTLS sidecar; app-layer TLS would break the mesh
 }
 
 
@@ -200,7 +213,7 @@ func (s *server) csmDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {
-	all := s.mgr.All()
+	all := s.mgr.All(r.Context())
 
 	type adminSession struct {
 		SessionID  string    `json:"session_id"`
@@ -227,7 +240,8 @@ func (s *server) adminListSessions(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) adminDeleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := s.mgr.Delete(r.Context(), id); err != nil {
+	// Expire rather than hard-delete so the CSM dashboard retains history.
+	if err := s.mgr.Expire(r.Context(), id); err != nil {
 		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -266,7 +280,7 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 
 	cutoff := time.Now().Add(-30 * 24 * time.Hour)
 	groups := map[groupKey]*group{}
-	for _, sess := range s.mgr.All() {
+	for _, sess := range s.mgr.All(r.Context()) {
 		// Skip demo sessions — they appear in the AE Demo Links tab, not here.
 		if sess.SessionType == "demo" {
 			continue
@@ -458,7 +472,7 @@ func (s *server) getMySession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.mgr.Get(r.PathValue("id"))
+	sess, ok := s.mgr.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -472,7 +486,7 @@ func (s *server) getSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -481,8 +495,9 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "forbidden", http.StatusForbidden)
 		return
 	}
-	if err := s.mgr.Delete(r.Context(), id); err != nil {
-		jsonError(w, err.Error(), http.StatusNotFound)
+	// Expire rather than hard-delete so the CSM dashboard retains history.
+	if err := s.mgr.Expire(r.Context(), id); err != nil {
+		jsonError(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -490,7 +505,7 @@ func (s *server) deleteSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) pauseSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -508,7 +523,7 @@ func (s *server) pauseSession(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) resumeSession(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -525,7 +540,7 @@ func (s *server) resumeSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.mgr.Get(r.PathValue("id"))
+	sess, ok := s.mgr.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -536,6 +551,10 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess.Status != session.StatusReady || sess.ServiceDNS == "" {
 		jsonError(w, "terminal not ready", http.StatusServiceUnavailable)
+		return
+	}
+	if !validServiceDNS(sess.ServiceDNS) {
+		jsonError(w, "invalid session DNS", http.StatusInternalServerError)
 		return
 	}
 	step := r.PathValue("step")
@@ -562,7 +581,9 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 		Passed bool `json:"passed"`
 		Pass   bool `json:"pass"`
 	}
-	_ = json.Unmarshal(respBody, &result)
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		log.Printf("verify step %s: unexpected response from VM agent: %v", step, err)
+	}
 	passed := result.Passed || result.Pass
 	if passed {
 		if err := s.mgr.MarkStepComplete(r.Context(), r.PathValue("id"), step); err != nil {
@@ -571,11 +592,11 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	normalized, _ := json.Marshal(map[string]bool{"passed": passed})
-	_, _ = w.Write(normalized)
+	_, _ = w.Write(normalized) // nosemgrep: go.lang.security.audit.xss.no-direct-write-to-responsewriter.no-direct-write-to-responsewriter -- server-generated JSON via json.Marshal, Content-Type: application/json
 }
 
 func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.mgr.Get(r.PathValue("id"))
+	sess, ok := s.mgr.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -588,6 +609,11 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
+	if !validServiceDNS(sess.ServiceDNS) {
+		http.Error(w, "invalid session DNS", http.StatusInternalServerError)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "read body failed", http.StatusBadRequest)
@@ -608,7 +634,7 @@ func (s *server) injectCmd(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.mgr.Get(r.PathValue("id"))
+	sess, ok := s.mgr.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -621,6 +647,11 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "browser not available", http.StatusServiceUnavailable)
 		return
 	}
+	if !validServiceDNS(sess.ServiceDNS) {
+		http.Error(w, "invalid session DNS", http.StatusInternalServerError)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, "read body failed", http.StatusBadRequest)
@@ -641,7 +672,7 @@ func (s *server) navigateBrowser(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
-	sess, ok := s.mgr.Get(r.PathValue("id"))
+	sess, ok := s.mgr.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		jsonError(w, "not found", http.StatusNotFound)
 		return
@@ -657,7 +688,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 		services = sc.Services
 	}
 
-	if sess.BrowserEnabled && sess.Status == session.StatusReady && sess.ServiceDNS != "" {
+	if sess.BrowserEnabled && sess.Status == session.StatusReady && sess.ServiceDNS != "" && validServiceDNS(sess.ServiceDNS) {
 		httpClient := &http.Client{Timeout: 10 * time.Second}
 		resp, err := httpClient.Get(fmt.Sprintf("http://%s:7680/services", sess.ServiceDNS))
 		if err == nil {
@@ -685,7 +716,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -702,13 +733,27 @@ func (s *server) browserProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:6080", sess.ServiceDNS), fmt.Sprintf("/vnc/%s", id)).ServeHTTP(w, r)
+	if !validServiceDNS(sess.ServiceDNS) {
+		http.Error(w, "invalid session DNS", http.StatusInternalServerError)
+		return
+	}
+	h, err := proxy.Handler(fmt.Sprintf("http://%s:6080", sess.ServiceDNS), fmt.Sprintf("/vnc/%s", id))
+	if err != nil {
+		http.Error(w, "proxy error", http.StatusInternalServerError)
+		return
+	}
+	h.ServeHTTP(w, r)
 }
 
 func (s *server) idePage(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if _, ok := s.mgr.Get(id); !ok {
+	sess, ok := s.mgr.Get(r.Context(), id)
+	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !ownsSession(r, sess) {
+		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
 	http.ServeFileFS(w, r, s.staticFS, "ide.html")
@@ -716,7 +761,7 @@ func (s *server) idePage(w http.ResponseWriter, r *http.Request) {
 
 func (s *server) ideFileProxy(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -729,7 +774,16 @@ func (s *server) ideFileProxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "IDE not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:7680", sess.ServiceDNS), fmt.Sprintf("/ide-api/%s", id)).ServeHTTP(w, r)
+	if !validServiceDNS(sess.ServiceDNS) {
+		http.Error(w, "invalid session DNS", http.StatusInternalServerError)
+		return
+	}
+	h, err := proxy.Handler(fmt.Sprintf("http://%s:7680", sess.ServiceDNS), fmt.Sprintf("/ide-api/%s", id))
+	if err != nil {
+		http.Error(w, "proxy error", http.StatusInternalServerError)
+		return
+	}
+	h.ServeHTTP(w, r)
 }
 
 func (s *server) terminalProxy(w http.ResponseWriter, r *http.Request) {
@@ -742,7 +796,7 @@ func (s *server) shellProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, port int, stripPrefix string) {
-	sess, ok := s.mgr.Get(id)
+	sess, ok := s.mgr.Get(r.Context(), id)
 	if !ok {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -755,7 +809,16 @@ func (s *server) proxyToVM(w http.ResponseWriter, r *http.Request, id string, po
 		http.Error(w, "terminal not ready", http.StatusServiceUnavailable)
 		return
 	}
-	proxy.Handler(fmt.Sprintf("http://%s:%d", sess.ServiceDNS, port), stripPrefix).ServeHTTP(w, r)
+	if !validServiceDNS(sess.ServiceDNS) {
+		http.Error(w, "invalid session DNS", http.StatusInternalServerError)
+		return
+	}
+	h, err := proxy.Handler(fmt.Sprintf("http://%s:%d", sess.ServiceDNS, port), stripPrefix)
+	if err != nil {
+		http.Error(w, "proxy error", http.StatusInternalServerError)
+		return
+	}
+	h.ServeHTTP(w, r)
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -808,9 +871,20 @@ func emailFromJWT(token string) string {
 // In production, authservice injects the ID token as Authorization: Bearer and
 // we parse the email from it. In dev (no authservice), we fall back to the UUID
 // cookie so local testing still works.
+// If an Authorization: Bearer header is present but the JWT carries no email
+// (malformed or expired token), we do NOT fall back to the cookie — the request
+// was explicitly trying to authenticate and we must not silently downgrade to
+// cookie auth, which any browser on the same machine could satisfy.
 func ownsSession(r *http.Request, sess *session.Session) bool {
-	if email := authedEmail(r); email != "" {
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		email := emailFromJWT(strings.TrimPrefix(auth, "Bearer "))
+		if email == "" {
+			return false
+		}
 		return strings.EqualFold(email, sess.UserEmail)
+	}
+	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
+		return strings.EqualFold(strings.ToLower(strings.TrimSpace(email)), sess.UserEmail)
 	}
 	c, err := r.Cookie("lab_client_id")
 	return err == nil && c.Value != "" && c.Value == sess.ClientID
@@ -829,12 +903,13 @@ func clientID(w http.ResponseWriter, r *http.Request) string {
 		return c.Value
 	}
 	id := uuid.New().String()
-	http.SetCookie(w, &http.Cookie{
+	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure set dynamically via isSecureRequest
 		Name:     cookieName,
 		Value:    id,
 		Path:     "/",
 		MaxAge:   86400 * 30,
 		HttpOnly: true,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 	return id
@@ -898,7 +973,7 @@ func (s *server) startDemoSession(w http.ResponseWriter, r *http.Request) {
 				jsonError(w, "session error", http.StatusInternalServerError)
 				return
 			}
-			s.setDemoCookie(w, cid)
+			s.setDemoCookie(w, r, cid)
 			jsonOK(w, map[string]string{"redirect_url": "/lab.html?session=" + existing.ID + "&scenario=" + existing.Scenario})
 			return
 		}
@@ -910,17 +985,18 @@ func (s *server) startDemoSession(w http.ResponseWriter, r *http.Request) {
 	// Patch ConfigMap record with the new session ID.
 	go s.patchDemoTokenSessionID(claims.TokenID, sess.ID)
 
-	s.setDemoCookie(w, cid)
+	s.setDemoCookie(w, r, cid)
 	jsonOK(w, map[string]string{"redirect_url": "/lab.html?session=" + sess.ID + "&scenario=" + sess.Scenario})
 }
 
-func (s *server) setDemoCookie(w http.ResponseWriter, cid string) {
-	http.SetCookie(w, &http.Cookie{
+func (s *server) setDemoCookie(w http.ResponseWriter, r *http.Request, cid string) {
+	http.SetCookie(w, &http.Cookie{ // nosemgrep: go.lang.security.audit.net.cookie-missing-secure.cookie-missing-secure -- Secure set dynamically via isSecureRequest
 		Name:     "lab_client_id",
 		Value:    cid,
 		Path:     "/",
 		MaxAge:   86400 * 7,
 		HttpOnly: true,
+		Secure:   isSecureRequest(r),
 		SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -940,7 +1016,7 @@ func (s *server) listDemoTokens(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Index demo sessions by AE token ID.
-	allSessions := s.mgr.All()
+	allSessions := s.mgr.All(r.Context())
 	sessionByToken := map[string]*session.Session{}
 	for _, sess := range allSessions {
 		if sess.SessionType == "demo" && sess.AEToken != "" {
@@ -1015,9 +1091,12 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 	if req.ExpiresHours <= 0 {
 		req.ExpiresHours = 72
 	}
+	if req.ExpiresHours > maxDemoTokenExpiryHours {
+		req.ExpiresHours = maxDemoTokenExpiryHours
+	}
 
 	expUnix := time.Now().Add(time.Duration(req.ExpiresHours) * time.Hour).Unix()
-	tokenID, token, err := generateDemoToken(s.hmacKey, req.ScenarioID, aeEmail, expUnix)
+	tokenID, token, err := generateDemoToken(s.hmacKey, sanitizeTokenField(req.ScenarioID), sanitizeTokenField(aeEmail), expUnix)
 	if err != nil {
 		log.Printf("generate demo token: %v", err)
 		jsonError(w, "token generation failed", http.StatusInternalServerError)
@@ -1060,10 +1139,10 @@ func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // isAE returns true if the request comes from an AE/admin user.
-// Group membership is checked first when the header is present; if authservice
-// does not forward X-Auth-Request-Groups (the common case), any authenticated
-// user (non-empty email) is treated as an AE since the admin page is already
-// SSO-gated.
+// When X-Auth-Request-Groups is present, we require the configured aeGroup.
+// When it is absent but DEMO_TOKEN_HMAC_KEY is set (production), we refuse: in
+// production authservice must forward the groups header and we must not grant
+// admin to any SSO-authenticated user. In dev (no hmacKey), email alone suffices.
 func (s *server) isAE(groups, email string) bool {
 	if groups != "" {
 		if s.aeGroup == "" {
@@ -1076,6 +1155,11 @@ func (s *server) isAE(groups, email string) bool {
 		}
 		return false
 	}
+	// Production: hmacKey is set, so enforce the groups header.
+	if s.hmacKey != nil {
+		return false
+	}
+	// Dev: no hmacKey, fall back to any authenticated user.
 	return strings.TrimSpace(email) != ""
 }
 
@@ -1140,7 +1224,7 @@ func demoBaseURL(r *http.Request) string {
 		scheme = "http"
 	}
 	host := r.Host
-	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
+	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" && isSafeHost(fwd) {
 		host = fwd
 	}
 	return scheme + "://" + host
@@ -1156,11 +1240,13 @@ func (s *server) readTokenStore(ctx context.Context) ([]demoTokenRecord, error) 
 		return nil, err
 	}
 	out := make([]demoTokenRecord, 0, len(cm.Data))
-	for _, v := range cm.Data {
+	for k, v := range cm.Data {
 		var rec demoTokenRecord
-		if json.Unmarshal([]byte(v), &rec) == nil {
-			out = append(out, rec)
+		if err := json.Unmarshal([]byte(v), &rec); err != nil {
+			log.Printf("readTokenStore: dropping malformed record %q: %v", k, err)
+			continue
 		}
+		out = append(out, rec)
 	}
 	return out, nil
 }
@@ -1191,10 +1277,65 @@ func (s *server) writeTokenRecord(ctx context.Context, tokenID string, rec demoT
 	return s.k8sClient.Patch(ctx, cm, patch)
 }
 
+// validServiceDNS returns true if the DNS name is a safe in-cluster service
+// name: only alphanumerics, hyphens, and dots, no path/port/scheme characters
+// that could be used for SSRF. The name must be non-empty.
+func validServiceDNS(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '.') {
+			return false
+		}
+	}
+	return true
+}
+
+// isSafeHost returns true if h is a plain host[:port] with no scheme, path,
+// or other characters that could redirect the generated URL to an attacker host.
+func isSafeHost(h string) bool {
+	if h == "" {
+		return false
+	}
+	for _, c := range h {
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
+			(c >= '0' && c <= '9') || c == '-' || c == '.' || c == ':' || c == '[' || c == ']') {
+			return false
+		}
+	}
+	return true
+}
+
+// sanitizeTokenField removes newline characters from a string used as a field
+// in the HMAC token payload, where \n is the delimiter.
+func sanitizeTokenField(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\r' {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// isSecureRequest returns true when the connection is HTTPS, either directly
+// or via a TLS-terminating proxy (X-Forwarded-Proto: https).
+func isSecureRequest(r *http.Request) bool {
+	if r.TLS != nil {
+		return true
+	}
+	return strings.ToLower(r.Header.Get("X-Forwarded-Proto")) == "https"
+}
+
 func (s *server) patchDemoTokenSessionID(tokenID, sessionID string) {
-	ctx := context.Background()
+	defer func() {
+		if p := recover(); p != nil {
+			log.Printf("patchDemoTokenSessionID panic: %v", p)
+		}
+	}()
 	cm := &corev1.ConfigMap{}
-	if err := s.k8sClient.Get(ctx, client.ObjectKey{Name: demoTokensCM, Namespace: s.serverNS}, cm); err != nil {
+	if err := s.k8sClient.Get(s.ctx, client.ObjectKey{Name: demoTokensCM, Namespace: s.serverNS}, cm); err != nil {
 		log.Printf("patch demo token session_id: get configmap: %v", err)
 		return
 	}
@@ -1210,7 +1351,7 @@ func (s *server) patchDemoTokenSessionID(tokenID, sessionID string) {
 	data, _ := json.Marshal(rec)
 	patch := client.MergeFrom(cm.DeepCopy())
 	cm.Data[tokenID] = string(data)
-	if err := s.k8sClient.Patch(ctx, cm, patch); err != nil {
+	if err := s.k8sClient.Patch(s.ctx, cm, patch); err != nil {
 		log.Printf("patch demo token session_id: %v", err)
 	}
 }

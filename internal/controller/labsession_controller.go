@@ -155,6 +155,16 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		phase = labv1.PhaseReady
 	}
 
+	// Once the VM is running again after a resume, the snapshot is no longer
+	// needed. Delete it and clear the field so future reconciles don't try to
+	// restore from it.
+	if ls.Status.SnapshotName != "" && (phase == labv1.PhaseRunning || phase == labv1.PhaseReady) {
+		if err := r.Provider.DeleteSnapshot(ctx, ls.Status.SnapshotName); err != nil {
+			return ctrl.Result{}, err
+		}
+		ls.Status.SnapshotName = ""
+	}
+
 	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message {
 		ls.Status.Phase = phase
 		ls.Status.ServiceDNS = res.ServiceDNS

@@ -14,7 +14,7 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
-	"text/template"
+	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template -- renders cloud-init YAML/shell, not HTML
 
 	corev1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
@@ -245,6 +245,18 @@ func (p *Provider) SnapshotReady(ctx context.Context, snapName string) (bool, er
 	return snap.Status != nil && snap.Status.ReadyToUse != nil && *snap.Status.ReadyToUse, nil
 }
 
+// DeleteSnapshot deletes the named VolumeSnapshot. IsNotFound is treated as success.
+func (p *Provider) DeleteSnapshot(ctx context.Context, snapName string) error {
+	snap := &snapshotv1.VolumeSnapshot{ObjectMeta: metav1.ObjectMeta{
+		Namespace: p.cfg.Namespace,
+		Name:      snapName,
+	}}
+	if err := p.cfg.Client.Delete(ctx, snap); err != nil && !apierrors.IsNotFound(err) {
+		return fmt.Errorf("delete snapshot %s: %w", snapName, err)
+	}
+	return nil
+}
+
 // goldenPVCForScenario maps a scenario to its golden PVC name.
 // Tier resolution: explicit sc.Image override → playground-<tier> prefix → "base".
 func (p *Provider) goldenPVCForScenario(scenarioID string) (string, error) {
@@ -310,15 +322,19 @@ func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, n
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, p.cfg.Client, dv, func() error {
 		dv.Labels = labels
-		dv.Spec = cdiv1.DataVolumeSpec{
-			Source: source,
-			PVC: &corev1.PersistentVolumeClaimSpec{
-				AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
-				Resources: corev1.VolumeResourceRequirements{
-					Requests: corev1.ResourceList{corev1.ResourceStorage: diskQ},
+		// DataVolume spec (source + PVC shape) is immutable once CDI begins
+		// importing. Only set it on create to avoid validation errors on update.
+		if dv.CreationTimestamp.IsZero() {
+			dv.Spec = cdiv1.DataVolumeSpec{
+				Source: source,
+				PVC: &corev1.PersistentVolumeClaimSpec{
+					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
+					Resources: corev1.VolumeResourceRequirements{
+						Requests: corev1.ResourceList{corev1.ResourceStorage: diskQ},
+					},
+					StorageClassName: storageClassPtr(p.cfg.StorageClass),
 				},
-				StorageClassName: storageClassPtr(p.cfg.StorageClass),
-			},
+			}
 		}
 		return controllerutil.SetControllerReference(ls, dv, p.cfg.Client.Scheme())
 	})
