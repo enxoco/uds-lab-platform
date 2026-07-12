@@ -38,7 +38,7 @@ jobs:
       - run: |
           uds run olm:generate-fulcio-token \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="uds-army-demo" \
+            --with olm_org="enxoco" \
             --with github_token="${{ secrets.GITHUB_TOKEN }}"
       - name: Lint
         run: uds run attest:lint
@@ -68,13 +68,13 @@ jobs:
             --with attestations="lint-witness.json,gitleaks-witness.json,opengrep-witness.json,zarf-create-witness.json" \
             --with sarif_files="gitleaks.sarif.json,opengrep.sarif.json" \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="uds-army-demo"
+            --with olm_org="enxoco"
 
       - name: Publish zarf package
         if: github.event_name == 'push'
         run: |
           uds run publish:zarf-package \
-            --with registry_org="uds-army-demo" \
+            --with registry_org="enxoco" \
             --with registry_user_id="${{ secrets.REGISTRY_USER_ID }}" \
             --with registry_password="${{ secrets.REGISTRY_PASSWORD }}"
 
