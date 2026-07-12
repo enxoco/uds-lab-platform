@@ -412,7 +412,7 @@ func emailDomain(email string) string {
 func (s *server) getConfig(w http.ResponseWriter, r *http.Request) {
 	jsonOK(w, map[string]any{
 		"session_ttl_minutes": s.ttlMinutes,
-		"is_ae":               s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)),
+		"is_ae":               s.isAE(groupsFromRequest(r), authedEmail(r)),
 	})
 }
 
@@ -867,6 +867,27 @@ func emailFromJWT(token string) string {
 	return strings.ToLower(strings.TrimSpace(claims.Email))
 }
 
+// groupsFromJWT extracts the groups claim from a JWT without signature verification.
+// Safe for the same reason as emailFromJWT — Istio already validated the token.
+// Keycloak emits groups as a []string with full paths (e.g. "/UDS Core/Admin").
+func groupsFromJWT(token string) []string {
+	parts := strings.SplitN(token, ".", 3)
+	if len(parts) < 2 {
+		return nil
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil
+	}
+	var claims struct {
+		Groups []string `json:"groups"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil
+	}
+	return claims.Groups
+}
+
 // ownsSession checks whether the requesting user owns the session.
 // In production, authservice injects the ID token as Authorization: Bearer and
 // we parse the email from it. In dev (no authservice), we fall back to the UUID
@@ -1128,9 +1149,27 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 
 // ── Demo middleware ───────────────────────────────────────────────────────────
 
+// groupsFromRequest resolves the caller's group list.
+// Prefers the X-Auth-Request-Groups header (set by authservice when configured);
+// falls back to decoding the JWT bearer token directly for deployments where
+// authservice does not forward claim headers (e.g. UDS Core 1.7).
+func groupsFromRequest(r *http.Request) []string {
+	if hdr := r.Header.Get("X-Auth-Request-Groups"); hdr != "" {
+		var gs []string
+		for _, g := range strings.Split(hdr, ",") {
+			gs = append(gs, strings.TrimSpace(g))
+		}
+		return gs
+	}
+	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
+		return groupsFromJWT(strings.TrimPrefix(auth, "Bearer "))
+	}
+	return nil
+}
+
 func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.isAE(r.Header.Get("X-Auth-Request-Groups"), authedEmail(r)) {
+		if !s.isAE(groupsFromRequest(r), authedEmail(r)) {
 			jsonError(w, "forbidden", http.StatusForbidden)
 			return
 		}
@@ -1139,23 +1178,18 @@ func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // isAE returns true if the request comes from an AE/admin user.
-// When X-Auth-Request-Groups is present, we require the configured aeGroup.
-// When it is absent but DEMO_TOKEN_HMAC_KEY is set (production), we refuse: in
-// production authservice must forward the groups header and we must not grant
-// admin to any SSO-authenticated user. In dev (no hmacKey), email alone suffices.
-func (s *server) isAE(groups, email string) bool {
-	if groups != "" {
-		if s.aeGroup == "" {
-			return false
-		}
-		for _, g := range strings.Split(groups, ",") {
-			if strings.TrimSpace(g) == s.aeGroup {
+// groups is the resolved list from X-Auth-Request-Groups or the JWT bearer token.
+// In dev (no hmacKey and no groups), any authenticated email suffices.
+func (s *server) isAE(groups []string, email string) bool {
+	if len(groups) > 0 {
+		for _, g := range groups {
+			if g == s.aeGroup {
 				return true
 			}
 		}
 		return false
 	}
-	// Production: hmacKey is set, so enforce the groups header.
+	// Production: hmacKey is set, so require group membership.
 	if s.hmacKey != nil {
 		return false
 	}
