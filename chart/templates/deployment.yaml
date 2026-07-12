@@ -4,6 +4,7 @@ metadata:
   name: lab-platform
   namespace: {{ .Release.Namespace }}
 ---
+# Server: read/write LabSessions in the VM namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -12,7 +13,7 @@ metadata:
 rules:
   - apiGroups: ["lab.uds.dev"]
     resources: ["labsessions"]
-    verbs: ["create", "get", "list", "delete"]
+    verbs: ["create", "get", "list", "patch", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -28,14 +29,13 @@ roleRef:
   name: lab-platform-server
   apiGroup: rbac.authorization.k8s.io
 ---
-# Demo token store: server reads/writes this ConfigMap in its own namespace.
+# Server: demo token ConfigMap in its own namespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: lab-platform-demo-tokens
   namespace: {{ .Release.Namespace }}
 rules:
-  # create has no resource name in the URL so resourceNames can't filter it
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["create"]
@@ -58,24 +58,18 @@ roleRef:
   name: lab-platform-demo-tokens
   apiGroup: rbac.authorization.k8s.io
 ---
-# Operator: cluster-wide watch for all managed resource types.
-# controller-runtime initializes cluster-scoped informers for all scheme types it accesses.
+# Operator: cluster-wide watch — LabSessions, Services, NetworkPolicies, Secrets.
+# controller-runtime initializes cluster-scoped informers for all watched types.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: lab-operator-watch
 rules:
   - apiGroups: ["lab.uds.dev"]
-    resources: ["labsessions", "labsessions/status"]
+    resources: ["labsessions", "labsessions/status", "labsessions/finalizers"]
     verbs: ["get", "list", "watch", "update", "patch"]
-  - apiGroups: ["cdi.kubevirt.io"]
-    resources: ["datavolumes"]
-    verbs: ["get", "list", "watch"]
-  - apiGroups: ["kubevirt.io"]
-    resources: ["virtualmachineinstances"]
-    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
-    resources: ["services"]
+    resources: ["services", "pods"]
     verbs: ["get", "list", "watch"]
   - apiGroups: ["networking.k8s.io"]
     resources: ["networkpolicies"]
@@ -83,6 +77,17 @@ rules:
   - apiGroups: [""]
     resources: ["secrets"]
     verbs: ["get", "list", "watch"]
+{{- if eq (default "kubevirt" .Values.provider) "kubevirt" }}
+  - apiGroups: ["cdi.kubevirt.io"]
+    resources: ["datavolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["kubevirt.io"]
+    resources: ["virtualmachineinstances"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -97,28 +102,36 @@ roleRef:
   name: lab-operator-watch
   apiGroup: rbac.authorization.k8s.io
 ---
-# Operator: write access to VM resources in vmNamespace only.
+# Operator: write access to session resources in vmNamespace.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: lab-operator
   namespace: {{ .Values.vmNamespace }}
 rules:
+  - apiGroups: ["lab.uds.dev"]
+    resources: ["labsessions", "labsessions/status", "labsessions/finalizers"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: [""]
+    resources: ["services", "pods"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["networkpolicies"]
+    verbs: ["create", "get", "list", "watch", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["create", "update", "patch", "delete"]
+{{- if eq (default "kubevirt" .Values.provider) "kubevirt" }}
   - apiGroups: ["kubevirt.io"]
     resources: ["virtualmachineinstances"]
     verbs: ["create", "get", "list", "watch", "update", "delete"]
   - apiGroups: ["cdi.kubevirt.io"]
     resources: ["datavolumes"]
     verbs: ["create", "update", "delete"]
-  - apiGroups: [""]
-    resources: ["services"]
-    verbs: ["create", "get", "list", "watch", "update", "delete"]
-  - apiGroups: ["networking.k8s.io"]
-    resources: ["networkpolicies"]
-    verbs: ["create", "get", "list", "watch", "update", "delete"]
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["create", "update", "delete"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["create", "get", "list", "watch", "delete"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

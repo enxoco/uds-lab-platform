@@ -5,10 +5,12 @@ metadata:
   namespace: {{ .Release.Namespace }}
 data:
   config.yaml: |
-    provider: kubevirt
+    provider: {{ .Values.provider | default "kubevirt" | quote }}
+{{- if eq (default "kubevirt" .Values.provider) "kubevirt" }}
     goldenPVCNamespace: {{ .Values.goldenPVCNamespace | default .Values.vmNamespace | quote }}
     goldenPVCDiskSize: {{ .Values.goldenPVCDiskSize | default "80Gi" | quote }}
     goldenPVCs:
     {{- range $tier, $pvc := .Values.goldenPVCs }}
       {{ $tier }}: {{ $pvc | quote }}
     {{- end }}
+{{- end }}

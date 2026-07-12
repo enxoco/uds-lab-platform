@@ -35,7 +35,7 @@ cd /root/reference-package && uds run setup:keycloak-user --with group="/UDS Cor
 
 This creates two users in Keycloak:
 - **admin** user (member of `/UDS Core/Admin`)
-- **doug** — the standard UDS test user, password: `unicorn123!@#UN`
+- **doug@uds.dev** — the standard UDS test user, password: `unicorn123!@#UN`
 
 Once the command finishes, click the **reference-package** chip in the browser panel above and log in as `doug` with that password. You'll be redirected through Keycloak and land on the reference package UI — the full OIDC flow driven by the client Pepr registered.
 

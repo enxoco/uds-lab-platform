@@ -22,8 +22,6 @@ source "qemu" "lab-playground-uds-core" {
   output_directory = "output/uds-core"
   vm_name          = "lab-playground-uds-core.qcow2"
 
-  # UDS Core images (Istio, Keycloak, Prometheus, etc.) can be 20-30GB of
-  # Docker layer storage on top of the tools base.
   disk_size = "80G"
   cpus      = 4
   memory    = 8192

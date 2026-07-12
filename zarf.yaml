@@ -4,21 +4,24 @@ apiVersion: zarf.dev/v1alpha1
 kind: ZarfPackageConfig
 metadata:
   name: uds-lab-platform
-  description: UDS Lab Platform — interactive ISV packaging labs
+  description: Lab server and operator — CRD, Deployments, RBAC.  KubeVirt/CDI/UDS Core are in the bundle.
   version: 0.1.0
 
 variables:
   - name: IMAGE
-    description: Lab platform container image
-    default: ghcr.io/enxoco/uds-lab-platform:dev-local
+    description: Lab platform container image (contains both /lab-server and /lab-operator)
+    default: lab-platform:0.1.0
   - name: DOMAIN
-    description: Base domain for lab platform (e.g. example.com)
+    description: Base domain (e.g. uds.dev) — used by the UDS Package CR for Istio expose
     default: uds.dev
+  - name: PROVIDER
+    description: Provider backend ("kubevirt" or "pod")
+    default: kubevirt
 
 components:
   - name: lab-crds
     required: true
-    description: LabSession CRD — must deploy before the operator starts
+    description: LabSession CRD and VM namespace
     manifests:
       - name: lab-crds
         files:
@@ -27,6 +30,7 @@ components:
 
   - name: lab-platform
     required: true
+    description: Lab server and operator Deployments, RBAC, and supporting resources
     charts:
       - name: lab-platform
         localPath: chart
@@ -34,54 +38,13 @@ components:
         namespace: lab-platform
         variables:
           - name: DOMAIN
-            description: Base domain for lab platform
+            description: Base domain for Istio expose
             path: domain
           - name: IMAGE
             description: Lab platform container image
             path: image
+          - name: PROVIDER
+            description: Provider backend (kubevirt or pod)
+            path: provider
     images:
-      - ghcr.io/enxoco/uds-lab-platform:dev-local
-    actions:
-      onDeploy:
-        after:
-          # Pepr processes the UDS Package CR and creates two Istio
-          # AuthorizationPolicies that gate all traffic through Keycloak SSO.
-          # The demo flow needs /demo and /api/demo-sessions to bypass both.
-          # We patch the policies here so this happens on every deploy/upgrade.
-          #
-          # Policy structure (ambient/waypoint mode — no port-15020 exemption):
-          #   Both policies target the waypoint Gateway, not a workload sidecar.
-          #   Neither policy has a `to` field — we add one to restrict the rule
-          #   to non-demo paths, which lets /demo bypass SSO entirely.
-          - description: Wait for Pepr to create authservice AuthorizationPolicy
-            maxTotalSeconds: 120
-            wait:
-              cluster:
-                kind: AuthorizationPolicy
-                name: uds-lab-platform-authservice
-                namespace: lab-platform
-          - description: Wait for Pepr to create jwt-authz AuthorizationPolicy
-            maxTotalSeconds: 120
-            wait:
-              cluster:
-                kind: AuthorizationPolicy
-                name: uds-lab-platform-jwt-authz
-                namespace: lab-platform
-          - description: Exempt /demo and /api/demo-sessions from authservice
-            maxTotalSeconds: 30
-            cmd: |
-              if ! kubectl patch authorizationpolicy uds-lab-platform-authservice \
-                  -n lab-platform \
-                  --type=json \
-                  -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'; then
-                echo "WARNING: authservice patch failed — run: uds run patch-demo-routes"
-              fi
-          - description: Exempt /demo and /api/demo-sessions from jwt-authz
-            maxTotalSeconds: 30
-            cmd: |
-              if ! kubectl patch authorizationpolicy uds-lab-platform-jwt-authz \
-                  -n lab-platform \
-                  --type=json \
-                  -p='[{"op":"add","path":"/spec/rules/0/to","value":[{"operation":{"notPaths":["/demo","/demo/*","/api/demo-sessions"]}}]}]'; then
-                echo "WARNING: jwt-authz patch failed — run: uds run patch-demo-routes"
-              fi
+      - lab-platform:0.1.0
