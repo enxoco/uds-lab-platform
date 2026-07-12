@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -49,7 +50,10 @@ func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
 
 	u := websocket.Upgrader{
 		// Only allow connections from the same host to prevent cross-origin
-		// WebSocket hijacking of terminal sessions.
+		// WebSocket hijacking of terminal sessions. Normalize both sides by
+		// stripping the port before comparing: browsers omit default ports in
+		// the Origin header (e.g. "example.com" not "example.com:443") while
+		// r.Host may include an explicit port from the upstream proxy.
 		CheckOrigin: func(r *http.Request) bool {
 			origin := r.Header.Get("Origin")
 			if origin == "" {
@@ -59,7 +63,12 @@ func proxyWS(w http.ResponseWriter, r *http.Request, targetWS string) {
 			if err != nil {
 				return false
 			}
-			return ou.Host == r.Host
+			ouHost := ou.Hostname() // strips port
+			rHost := r.Host
+			if h, _, err := net.SplitHostPort(r.Host); err == nil {
+				rHost = h
+			}
+			return ouHost == rHost
 		},
 		Subprotocols: subprotocols,
 	}

@@ -156,21 +156,28 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Once the VM is running again after a resume, the snapshot is no longer
-	// needed. Delete it and clear the field so future reconciles don't try to
-	// restore from it.
+	// needed. Clear the name in status BEFORE attempting deletion so that a
+	// transient DeleteSnapshot error does not block the phase transition on
+	// retry — the cleared SnapshotName is persisted first, then deletion is
+	// fire-and-forget.
+	snapToDelete := ""
 	if ls.Status.SnapshotName != "" && (phase == labv1.PhaseRunning || phase == labv1.PhaseReady) {
-		if err := r.Provider.DeleteSnapshot(ctx, ls.Status.SnapshotName); err != nil {
-			return ctrl.Result{}, err
-		}
+		snapToDelete = ls.Status.SnapshotName
 		ls.Status.SnapshotName = ""
 	}
 
-	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message {
+	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message || snapToDelete != "" {
 		ls.Status.Phase = phase
 		ls.Status.ServiceDNS = res.ServiceDNS
 		ls.Status.Message = res.Message
 		if err := r.Status().Update(ctx, ls); err != nil {
 			return ctrl.Result{}, err
+		}
+	}
+
+	if snapToDelete != "" {
+		if err := r.Provider.DeleteSnapshot(ctx, snapToDelete); err != nil {
+			log.FromContext(ctx).Error(err, "delete post-resume snapshot", "snapshot", snapToDelete)
 		}
 	}
 
