@@ -9,7 +9,7 @@ packer/output/
 packer/packer-key
 packer/packer-key.pub
 uds-lab-platform
-laboperator
+/laboperator
 bin/
 *.tar
 *.tar.*
@@ -23,4 +23,4 @@ node_modules/
 web/ide-src/
 .codegraph/
 
-labserver
+/labserver

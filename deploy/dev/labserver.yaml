@@ -1,0 +1,96 @@
+# Dev-only labserver deployment for the pod provider backend.
+# The server runs inside k3d so it can resolve session service DNS.
+# Apply with: kubectl apply -f deploy/dev/labserver.yaml
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: labserver
+  namespace: uds-lab-platform
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: labserver
+  namespace: uds-lab-vms
+rules:
+  - apiGroups: ["lab.uds.dev"]
+    resources: ["labsessions"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["lab.uds.dev"]
+    resources: ["labsessions/status"]
+    verbs: ["get", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: labserver
+  namespace: uds-lab-vms
+subjects:
+  - kind: ServiceAccount
+    name: labserver
+    namespace: uds-lab-platform
+roleRef:
+  kind: Role
+  name: labserver
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: labserver-configmaps
+  namespace: uds-lab-platform
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "create", "update", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: labserver-configmaps
+  namespace: uds-lab-platform
+subjects:
+  - kind: ServiceAccount
+    name: labserver
+    namespace: uds-lab-platform
+roleRef:
+  kind: Role
+  name: labserver-configmaps
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: labserver
+  namespace: uds-lab-platform
+  labels:
+    app: labserver
+spec:
+  serviceAccountName: labserver
+  containers:
+    - name: labserver
+      image: ghcr.io/enxoco/uds-labserver:dev
+      imagePullPolicy: Never   # loaded via k3d image import
+      ports:
+        - containerPort: 8080
+      env:
+        - name: VM_NAMESPACE
+          value: uds-lab-vms
+        - name: SERVER_NAMESPACE
+          value: uds-lab-platform
+        - name: SESSION_TTL_MINUTES
+          value: "60"
+        # SCENARIOS_DIR and STATIC_DIR are omitted — server uses embedded FS
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: labserver
+  namespace: uds-lab-platform
+spec:
+  selector:
+    app: labserver
+  ports:
+    - port: 8080
+      targetPort: 8080

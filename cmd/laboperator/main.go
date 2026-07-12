@@ -1,7 +1,10 @@
 // Command laboperator is the Lab Operator (ADR-0011): it watches LabSession
-// objects and reconciles each into a provider VM (KubeVirt VMI), Service, and
-// NetworkPolicy, enforces TTL, and reports readiness. It holds no in-memory
+// objects and reconciles each into a provider VM (KubeVirt VMI or Pod), Service,
+// and NetworkPolicy, enforces TTL, and reports readiness. It holds no in-memory
 // session state — restarts recover by listing.
+//
+// Provider selection: set PROVIDER_TYPE=pod for the container-based dev backend
+// (macOS / any k8s without nested virtualisation). Default is kubevirt.
 package main
 
 import (
@@ -14,6 +17,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
 	snapshotv1 "github.com/kubernetes-csi/external-snapshotter/client/v8/apis/volumesnapshot/v1"
 	kvv1 "kubevirt.io/api/core/v1"
@@ -23,7 +27,9 @@ import (
 	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
 	"github.com/enxoco/uds-lab-platform/internal/controller"
 	"github.com/enxoco/uds-lab-platform/internal/operator"
+	"github.com/enxoco/uds-lab-platform/internal/provider"
 	"github.com/enxoco/uds-lab-platform/internal/provider/kubevirt"
+	"github.com/enxoco/uds-lab-platform/internal/provider/pod"
 )
 
 var scheme = runtime.NewScheme()
@@ -83,25 +89,55 @@ func main() {
 		os.Exit(1)
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{Scheme: scheme})
+	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+		Scheme: scheme,
+		// Default metrics port (:8080) conflicts with the lab server. Use :8081,
+		// or set METRICS_ADDR=0 to disable metrics entirely in dev.
+		Metrics: metricsserver.Options{
+			BindAddress: envOr("METRICS_ADDR", ":8081"),
+		},
+	})
 	if err != nil {
 		setupLog.Error(err, "create manager")
 		os.Exit(1)
 	}
 
-	prov := kubevirt.New(kubevirt.Config{
-		Client:          mgr.GetClient(),
-		Namespace:       vmNamespace,
-		ServerNamespace: serverNamespace,
-		UserDataTmpl:    udTmpl,
-		ScenariosFS:     scenariosFS,
-		InjectPy:        string(injectPy),
-		SizeOverrides:   sizeOverrides,
-		GoldenPVCs:         cfg.GoldenPVCs,
-		GoldenPVCNamespace: cfg.GoldenPVCNamespace,
-		GoldenPVCDiskSize:  cfg.GoldenPVCDiskSize,
-		StorageClass:    storageClass,
-	})
+	var prov provider.Provider
+	switch providerType := envOr("PROVIDER_TYPE", "kubevirt"); providerType {
+	case "pod":
+		labImage := os.Getenv("LAB_IMAGE")
+		if labImage == "" {
+			setupLog.Error(nil, "LAB_IMAGE must be set when PROVIDER_TYPE=pod")
+			os.Exit(1)
+		}
+		prov = pod.New(pod.Config{
+			Client:          mgr.GetClient(),
+			Namespace:       vmNamespace,
+			ServerNamespace: serverNamespace,
+			ScenariosFS:     scenariosFS,
+			Image:           labImage,
+			SizeOverrides:   sizeOverrides,
+		})
+		setupLog.Info("using pod provider (dev/macOS backend)", "image", labImage)
+	case "kubevirt":
+		prov = kubevirt.New(kubevirt.Config{
+			Client:             mgr.GetClient(),
+			Namespace:          vmNamespace,
+			ServerNamespace:    serverNamespace,
+			UserDataTmpl:       udTmpl,
+			ScenariosFS:        scenariosFS,
+			InjectPy:           string(injectPy),
+			SizeOverrides:      sizeOverrides,
+			GoldenPVCs:         cfg.GoldenPVCs,
+			GoldenPVCNamespace: cfg.GoldenPVCNamespace,
+			GoldenPVCDiskSize:  cfg.GoldenPVCDiskSize,
+			StorageClass:       storageClass,
+		})
+		setupLog.Info("using kubevirt provider")
+	default:
+		setupLog.Error(nil, "unknown PROVIDER_TYPE (want kubevirt or pod)", "value", providerType)
+		os.Exit(1)
+	}
 
 	if err := (&controller.LabSessionReconciler{
 		Client:   mgr.GetClient(),
@@ -112,7 +148,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting lab operator", "vmNamespace", vmNamespace, "serverNamespace", serverNamespace)
+	setupLog.Info("starting lab operator", "vmNamespace", vmNamespace, "serverNamespace", serverNamespace, "provider", envOr("PROVIDER_TYPE", "kubevirt"))
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "manager exited")
 		os.Exit(1)

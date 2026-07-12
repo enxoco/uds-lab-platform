@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -61,8 +62,12 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			if err := r.Provider.Teardown(ctx, ls); err != nil {
 				return ctrl.Result{}, err
 			}
+			base := ls.DeepCopy()
 			controllerutil.RemoveFinalizer(ls, finalizer)
-			if err := r.Update(ctx, ls); err != nil {
+			if err := r.Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{Requeue: true}, nil
+				}
 				return ctrl.Result{}, err
 			}
 		}
@@ -71,8 +76,12 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Ensure finalizer so teardown runs before the CR disappears.
 	if !controllerutil.ContainsFinalizer(ls, finalizer) {
+		base := ls.DeepCopy()
 		controllerutil.AddFinalizer(ls, finalizer)
-		if err := r.Update(ctx, ls); err != nil {
+		if err := r.Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
@@ -86,9 +95,13 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			if err := r.Provider.Teardown(ctx, ls); err != nil {
 				return ctrl.Result{}, err
 			}
+			base := ls.DeepCopy()
 			ls.Status.Phase = labv1.PhaseExpired
 			ls.Status.SnapshotName = ""
-			if err := r.Status().Update(ctx, ls); err != nil {
+			if err := r.Status().Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{Requeue: true}, nil
+				}
 				return ctrl.Result{}, err
 			}
 		}
@@ -107,9 +120,13 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			if err != nil {
 				return ctrl.Result{}, err
 			}
+			base := ls.DeepCopy()
 			ls.Status.SnapshotName = snapName
 			ls.Status.ServiceDNS = ""
-			if err := r.Status().Update(ctx, ls); err != nil {
+			if err := r.Status().Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+				if apierrors.IsConflict(err) {
+					return ctrl.Result{Requeue: true}, nil
+				}
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -122,8 +139,12 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.Provider.TeardownDisk(ctx, ls); err != nil {
 			return ctrl.Result{}, err
 		}
+		base := ls.DeepCopy()
 		ls.Status.Phase = labv1.PhasePaused
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.Status().Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -131,8 +152,12 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Resume: clear paused flag and let Reconcile recreate the VM from snapshot.
 	if !ls.Spec.Paused && ls.Status.Phase == labv1.PhasePaused {
+		base := ls.DeepCopy()
 		ls.Status.Phase = labv1.PhaseProvisioning
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.Status().Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -156,10 +181,14 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message {
+		base := ls.DeepCopy()
 		ls.Status.Phase = phase
 		ls.Status.ServiceDNS = res.ServiceDNS
 		ls.Status.Message = res.Message
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.Status().Patch(ctx, ls, client.MergeFrom(base)); err != nil {
+			if apierrors.IsConflict(err) {
+				return ctrl.Result{Requeue: true}, nil
+			}
 			return ctrl.Result{}, err
 		}
 	}
