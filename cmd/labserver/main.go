@@ -56,6 +56,7 @@ type server struct {
 	hmacKey     []byte
 	serverNS    string
 	ctx         context.Context
+	devMode     bool // true only when DEV_MODE=true is explicitly set
 }
 
 const (
@@ -90,6 +91,13 @@ func main() {
 	if len(hmacKey) < 32 {
 		log.Printf("WARNING: DEMO_TOKEN_HMAC_KEY not set or too short (<32 bytes) — demo token routes disabled")
 		hmacKey = nil
+	}
+
+	devMode := strings.EqualFold(os.Getenv("DEV_MODE"), "true")
+	if devMode {
+		log.Printf("WARNING: DEV_MODE=true — all authenticated users have admin access; do not run in production")
+	} else if hmacKey == nil {
+		log.Printf("WARNING: DEMO_TOKEN_HMAC_KEY is unset and DEV_MODE is not enabled — admin routes require group membership via JWT; set DEV_MODE=true to allow any authenticated user admin access in development")
 	}
 
 	// Scenarios FS: OS override for development, embedded otherwise.
@@ -152,6 +160,7 @@ func main() {
 		hmacKey:     hmacKey,
 		serverNS:    serverNS,
 		ctx:         srvCtx,
+		devMode:     devMode,
 	}
 
 	mux := http.NewServeMux()
@@ -285,7 +294,7 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 		if sess.SessionType == "demo" {
 			continue
 		}
-		// Skip sessions that expired more than 30 days ago.
+		// Skip sessions that expired more than 30 days ago from the dashboard.
 		if sess.Status == session.StatusExpired && sess.ExpiresAt.Before(cutoff) {
 			continue
 		}
@@ -438,6 +447,7 @@ func (s *server) createSession(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Scenario string `json:"scenario"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Scenario == "" {
 		jsonError(w, "scenario required", http.StatusBadRequest)
 		return
@@ -571,7 +581,7 @@ func (s *server) verifyStep(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
 	if err != nil {
 		jsonError(w, "verify: read response", http.StatusBadGateway)
 		return
@@ -694,7 +704,7 @@ func (s *server) sessionServices(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			defer func() { _ = resp.Body.Close() }()
 			var detected []scenario.ServiceLink
-			if json.NewDecoder(resp.Body).Decode(&detected) == nil {
+			if json.NewDecoder(io.LimitReader(resp.Body, 64*1024)).Decode(&detected) == nil {
 				existing := make(map[string]bool, len(services))
 				for _, svc := range services {
 					existing[svc.URL] = true
@@ -834,13 +844,12 @@ func jsonError(w http.ResponseWriter, msg string, code int) {
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
-// authedEmail returns the authenticated user's email from the request.
-// Authservice forwards the ID token as "Authorization: Bearer <jwt>" rather
-// than setting X-Auth-Request-Email, so we parse the JWT payload when needed.
+// authedEmail returns the authenticated user's email from the signed JWT bearer
+// token. UDS Core authservice sets Authorization: Bearer <id_token>; Istio's
+// RequestAuthentication validates the signature before the request reaches the
+// app. X-Auth-Request-Email is NOT read here — UDS Core authservice does not
+// inject it, and accepting it would allow email spoofing for session attribution.
 func authedEmail(r *http.Request) string {
-	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
-		return strings.ToLower(strings.TrimSpace(email))
-	}
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 		return emailFromJWT(strings.TrimPrefix(auth, "Bearer "))
 	}
@@ -896,6 +905,8 @@ func groupsFromJWT(token string) []string {
 // (malformed or expired token), we do NOT fall back to the cookie — the request
 // was explicitly trying to authenticate and we must not silently downgrade to
 // cookie auth, which any browser on the same machine could satisfy.
+// X-Auth-Request-Email is NOT checked here — UDS Core authservice does not
+// inject it, and accepting it would allow session ownership spoofing.
 func ownsSession(r *http.Request, sess *session.Session) bool {
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 		email := emailFromJWT(strings.TrimPrefix(auth, "Bearer "))
@@ -903,9 +914,6 @@ func ownsSession(r *http.Request, sess *session.Session) bool {
 			return false
 		}
 		return strings.EqualFold(email, sess.UserEmail)
-	}
-	if email := r.Header.Get("X-Auth-Request-Email"); email != "" {
-		return strings.EqualFold(strings.ToLower(strings.TrimSpace(email)), sess.UserEmail)
 	}
 	c, err := r.Cookie("lab_client_id")
 	return err == nil && c.Value != "" && c.Value == sess.ClientID
@@ -965,6 +973,7 @@ func (s *server) startDemoSession(w http.ResponseWriter, r *http.Request) {
 		Token string `json:"token"`
 		Email string `json:"email"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Token == "" || req.Email == "" {
 		jsonError(w, "token and email required", http.StatusBadRequest)
 		return
@@ -1098,9 +1107,10 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 	aeEmail := authedEmail(r)
 
 	var req struct {
-		ScenarioID  string `json:"scenario"`
-		ExpiresHours int   `json:"expires_hours"`
+		ScenarioID   string `json:"scenario"`
+		ExpiresHours int    `json:"expires_hours"`
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.ScenarioID == "" {
 		jsonError(w, "scenario required", http.StatusBadRequest)
 		return
@@ -1149,18 +1159,14 @@ func (s *server) createDemoToken(w http.ResponseWriter, r *http.Request) {
 
 // ── Demo middleware ───────────────────────────────────────────────────────────
 
-// groupsFromRequest resolves the caller's group list.
-// Prefers the X-Auth-Request-Groups header (set by authservice when configured);
-// falls back to decoding the JWT bearer token directly for deployments where
-// authservice does not forward claim headers (e.g. UDS Core 1.7).
+// groupsFromRequest resolves the caller's group list from the signed JWT bearer
+// token. UDS Core authservice (istio-ecosystem/authservice) sets Authorization:
+// Bearer <id_token>; Istio's RequestAuthentication validates the signature before
+// the request reaches the app. We do NOT read X-Auth-Request-Groups because UDS
+// Core authservice does not inject it, Istio does not strip client-supplied copies
+// of it, and accepting it would allow any authenticated user to inject arbitrary
+// group membership.
 func groupsFromRequest(r *http.Request) []string {
-	if hdr := r.Header.Get("X-Auth-Request-Groups"); hdr != "" {
-		var gs []string
-		for _, g := range strings.Split(hdr, ",") {
-			gs = append(gs, strings.TrimSpace(g))
-		}
-		return gs
-	}
 	if auth := r.Header.Get("Authorization"); strings.HasPrefix(auth, "Bearer ") {
 		return groupsFromJWT(strings.TrimPrefix(auth, "Bearer "))
 	}
@@ -1178,8 +1184,9 @@ func (s *server) requireAE(h http.HandlerFunc) http.HandlerFunc {
 }
 
 // isAE returns true if the request comes from an AE/admin user.
-// groups is the resolved list from X-Auth-Request-Groups or the JWT bearer token.
-// In dev (no hmacKey and no groups), any authenticated email suffices.
+// groups is the resolved list from the signed JWT bearer token.
+// In dev mode (DEV_MODE=true), any authenticated email suffices as a fallback
+// when no groups are present — never enabled in production.
 func (s *server) isAE(groups []string, email string) bool {
 	if len(groups) > 0 {
 		for _, g := range groups {
@@ -1189,12 +1196,11 @@ func (s *server) isAE(groups []string, email string) bool {
 		}
 		return false
 	}
-	// Production: hmacKey is set, so require group membership.
-	if s.hmacKey != nil {
-		return false
+	// Dev only: allow any authenticated user when DEV_MODE is explicitly set.
+	if s.devMode {
+		return strings.TrimSpace(email) != ""
 	}
-	// Dev: no hmacKey, fall back to any authenticated user.
-	return strings.TrimSpace(email) != ""
+	return false
 }
 
 // ── Demo token helpers ────────────────────────────────────────────────────────

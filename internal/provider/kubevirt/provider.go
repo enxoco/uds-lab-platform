@@ -259,6 +259,7 @@ func (p *Provider) DeleteSnapshot(ctx context.Context, snapName string) error {
 
 // goldenPVCForScenario maps a scenario to its golden PVC name.
 // Tier resolution: explicit sc.Image override → playground-<tier> prefix → "base".
+// The tools playground uses the consolidated base image.
 func (p *Provider) goldenPVCForScenario(scenarioID string) (string, error) {
 	sc, err := scenario.Load(p.cfg.ScenariosFS, scenarioID)
 	if err != nil {
@@ -274,6 +275,9 @@ func (p *Provider) goldenPVCForScenario(scenarioID string) (string, error) {
 		if len(scenarioID) > len(prefix) && scenarioID[:len(prefix)] == prefix {
 			tier = scenarioID[len(prefix):]
 		}
+	}
+	if tier == "tools" {
+		tier = "base"
 	}
 
 	pvcName, ok := p.cfg.GoldenPVCs[tier]

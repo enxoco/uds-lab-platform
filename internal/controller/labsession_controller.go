@@ -79,7 +79,9 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// TTL: once expired, tear down everything (including any snapshot) but retain
-	// the CR so the CSM dashboard can read completed steps for up to 30 days.
+	// the CR so the CSM dashboard can display completed steps for up to 30 days.
+	// TODO: delete expired CRs after this display window to enforce physical
+	// retention, rather than only filtering them from the dashboard.
 	if !ls.Spec.ExpiresAt.IsZero() && time.Now().After(ls.Spec.ExpiresAt.Time) {
 		if ls.Status.Phase != labv1.PhaseExpired {
 			l.Info("session expired, tearing down VM", "session", ls.Spec.SessionID)
@@ -156,13 +158,11 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	// Once the VM is running again after a resume, the snapshot is no longer
-	// needed. Delete it and clear the field so future reconciles don't try to
-	// restore from it.
-	if ls.Status.SnapshotName != "" && (phase == labv1.PhaseRunning || phase == labv1.PhaseReady) {
-		if err := r.Provider.DeleteSnapshot(ctx, ls.Status.SnapshotName); err != nil {
-			return ctrl.Result{}, err
-		}
-		ls.Status.SnapshotName = ""
+	// needed. Keep SnapshotName until deletion succeeds so a transient storage
+	// error can be retried without blocking the session's phase transition.
+	snapToDelete := ls.Status.SnapshotName
+	if phase != labv1.PhaseRunning && phase != labv1.PhaseReady {
+		snapToDelete = ""
 	}
 
 	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message {
@@ -172,6 +172,22 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.Status().Update(ctx, ls); err != nil {
 			return ctrl.Result{}, err
 		}
+	}
+
+	snapshotCleanupPending := false
+	if snapToDelete != "" {
+		if err := r.Provider.DeleteSnapshot(ctx, snapToDelete); err != nil {
+			log.FromContext(ctx).Error(err, "delete post-resume snapshot", "snapshot", snapToDelete)
+			snapshotCleanupPending = true
+		} else {
+			ls.Status.SnapshotName = ""
+			if err := r.Status().Update(ctx, ls); err != nil {
+				return ctrl.Result{}, err
+			}
+		}
+	}
+	if snapshotCleanupPending {
+		return ctrl.Result{RequeueAfter: requeueWhilePending}, nil
 	}
 
 	// Requeue until Ready (and to re-check TTL).

@@ -29,7 +29,7 @@ tasks:
           rm -f bundle/uds-bundle-*.tar.zst
           rm -f packages/cdi/zarf-package-*.tar.zst
           rm -f packages/vm-images/zarf-package-*.tar.zst
-          rm -f packages/vm-images/base.tar packages/vm-images/tools.tar packages/vm-images/uds-core.tar
+          rm -f packages/vm-images/base.tar packages/vm-images/uds-core.tar
           rm -rf ~/.cache/zarf-tmp
           echo "Done."
 
@@ -446,9 +446,6 @@ tasks:
       base_qcow2:
         description: Path to base qcow2
         default: packer/output/base/lab-base.qcow2
-      tools_qcow2:
-        description: Path to tools qcow2
-        default: packer/output/tools/lab-playground-tools.qcow2
       uds_core_qcow2:
         description: Path to UDS Core qcow2
         default: packer/output/uds-core/lab-playground-uds-core.qcow2
@@ -465,7 +462,6 @@ tasks:
           fi
           import_args=()
           [ -f "${{ .inputs.base_qcow2 }}" ]     && import_args+=("BASE_QCOW2=${{ .inputs.base_qcow2 }}")
-          [ -f "${{ .inputs.tools_qcow2 }}" ]    && import_args+=("TOOLS_QCOW2=${{ .inputs.tools_qcow2 }}")
           [ -f "${{ .inputs.uds_core_qcow2 }}" ] && import_args+=("UDS_CORE_QCOW2=${{ .inputs.uds_core_qcow2 }}")
           if [ ${#import_args[@]} -eq 0 ]; then
             echo "No qcow2 files found at expected paths — skipping golden PVC import"
@@ -632,7 +628,7 @@ tasks:
         cmd: |
           FAILED=0
           NS="uds-lab-vms"
-          for pvc in golden-base golden-tools golden-uds-core; do
+          for pvc in golden-base golden-uds-core; do
             phase=$(kubectl get datavolume "$pvc" -n "$NS" \
               -o jsonpath='{.status.phase}' 2>/dev/null || echo "missing")
             if [ "$phase" = "Succeeded" ]; then

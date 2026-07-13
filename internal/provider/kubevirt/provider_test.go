@@ -36,17 +36,17 @@ func TestGoldenPVCForScenario_BaseFallback(t *testing.T) {
 	}
 }
 
-func TestGoldenPVCForScenario_PlaygroundToolsTier(t *testing.T) {
+func TestGoldenPVCForScenario_PlaygroundToolsUsesBaseTier(t *testing.T) {
 	p := New(Config{
 		ScenariosFS: scenariosFS,
-		GoldenPVCs:  map[string]string{"tools": "golden-tools"},
+		GoldenPVCs:  map[string]string{"base": "golden-base"},
 	})
 	got, err := p.goldenPVCForScenario("playground-tools")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got != "golden-tools" {
-		t.Errorf("PVC name = %q, want golden-tools", got)
+	if got != "golden-base" {
+		t.Errorf("PVC name = %q, want golden-base", got)
 	}
 }
 

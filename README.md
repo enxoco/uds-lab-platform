@@ -30,9 +30,8 @@ VM images are built once with Packer (QEMU/KVM) and imported into the cluster as
 
 | Tier | Golden PVC | Contents |
 |------|-----------|----------|
-| `base` | `golden-base` | Ubuntu 24.04 + tmux, ttyd, noVNC, Chromium, dnsmasq |
-| `tools` | `golden-tools` | Base + Docker, k3d, uds CLI, neovim, jq, yq |
-| `uds-core` | `golden-uds-core` | Tools + k3d-core-slim-dev fully deployed |
+| `base` | `golden-base` | Ubuntu 24.04 + Docker, k3d, uds CLI, neovim, jq, yq, tmux, ttyd, noVNC, Chromium |
+| `uds-core` | `golden-uds-core` | Base + k3d-core-slim-dev fully deployed |
 
 ## Prerequisites
 
@@ -56,7 +55,7 @@ VM images are built once with Packer (QEMU/KVM) and imported into the cluster as
 
 This will:
 1. Generate a packer SSH keypair (if missing)
-2. Build all three VM qcow2 images with Packer (~60 min)
+2. Build both VM qcow2 images with Packer (~60 min)
 3. Wipe and reinstall k3s (MetalLB + KubeVirt + CDI + UDS Core)
 4. Build and deploy the lab-platform Docker image
 5. Import golden PVCs from the built qcow2s
@@ -95,23 +94,22 @@ After the script completes:
 Images are built locally with QEMU/KVM and output as qcow2 files in `packer/output/`.
 
 ```bash
-# Build all three images
+# Build both images
 uds run build-images
 
 # Skip specific tiers (reuse existing qcow2s)
 uds run build-images --with skip_base=1
-uds run build-images --with skip_base=1 --with skip_tools=1
 ```
 
-Build order: `lab-base` → `playground-tools` → `playground-uds-core`. Each stage
-uses the previous stage's qcow2 as its base disk. The UDS Core image takes ~45 min
+Build order: `lab-base` → `playground-uds-core`. The base image includes the
+tools previously provided by a separate image. Each stage uses the previous
+stage's qcow2 as its base disk. The UDS Core image takes ~45 min
 (deploys a full k3d UDS Core cluster inside the VM before snapshotting).
 
 ### Import golden PVCs (after building images)
 
 ```bash
 BASE_QCOW2=packer/output/base/lab-base.qcow2 \
-TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \
 UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
 ./scripts/create-golden-pvc.sh
 ```

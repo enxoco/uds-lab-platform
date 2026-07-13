@@ -9,7 +9,6 @@
 #
 # Usage:
 #   BASE_QCOW2=packer/output/base/lab-base.qcow2 \
-#   TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \
 #   UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
 #   ./scripts/create-golden-pvc.sh
 #
@@ -26,7 +25,6 @@ die()  { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 GOLDEN_NAMESPACE="${GOLDEN_NAMESPACE:-uds-lab-vms}"
 # Each tier gets its own port — no kill/rebind race between imports.
 PORT_BASE="${PORT_BASE:-18888}"
-PORT_TOOLS="${PORT_TOOLS:-18889}"
 PORT_UDS_CORE="${PORT_UDS_CORE:-18890}"
 HTTP_PIDS=()
 
@@ -46,7 +44,7 @@ command -v python3  &>/dev/null || die "python3 not found (needed for HTTP serve
 
 # Kill any stale HTTP servers from a previous run on our ports.
 # fuser requires no elevated privileges unlike ss -tlnp pid info.
-for port in "$PORT_BASE" "$PORT_TOOLS" "$PORT_UDS_CORE"; do
+for port in "$PORT_BASE" "$PORT_UDS_CORE"; do
   if command -v fuser &>/dev/null; then
     fuser -k "${port}/tcp" &>/dev/null && warn "Killed stale server on port $port" || true
   elif command -v lsof &>/dev/null; then
@@ -99,8 +97,8 @@ log "Host IP for CDI HTTP import: $HOST_IP"
 
 # ── Import one image ──────────────────────────────────────────────────────────
 import_image() {
-  local tier="$1"     # base | tools | uds-core
-  local pvc_name="$2" # golden-base | golden-tools | golden-uds-core
+  local tier="$1"     # base | uds-core
+  local pvc_name="$2" # golden-base | golden-uds-core
   local qcow2="$3"    # path to qcow2 file
   local port="$4"     # dedicated HTTP port for this tier
 
@@ -206,13 +204,6 @@ else
   warn "BASE_QCOW2 not set — skipping base tier"
 fi
 
-if [ -n "${TOOLS_QCOW2:-}" ]; then
-  import_image "tools" "golden-tools" "$TOOLS_QCOW2" "$PORT_TOOLS"
-  imported=$(( imported + 1 ))
-else
-  warn "TOOLS_QCOW2 not set — skipping tools tier"
-fi
-
 if [ -n "${UDS_CORE_QCOW2:-}" ]; then
   import_image "uds-core" "golden-uds-core" "$UDS_CORE_QCOW2" "$PORT_UDS_CORE"
   imported=$(( imported + 1 ))
@@ -220,7 +211,7 @@ else
   warn "UDS_CORE_QCOW2 not set — skipping uds-core tier"
 fi
 
-[ "$imported" -gt 0 ] || die "No qcow2 files provided. Set BASE_QCOW2, TOOLS_QCOW2, or UDS_CORE_QCOW2."
+[ "$imported" -gt 0 ] || die "No qcow2 files provided. Set BASE_QCOW2 or UDS_CORE_QCOW2."
 
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -228,6 +219,5 @@ echo "  Golden PVCs ready in namespace: ${GOLDEN_NAMESPACE}"
 echo ""
 echo "  Update chart/values.yaml goldenPVCs section:"
 [ -n "${BASE_QCOW2:-}" ]     && echo "    base:     golden-base"
-[ -n "${TOOLS_QCOW2:-}" ]    && echo "    tools:    golden-tools"
 [ -n "${UDS_CORE_QCOW2:-}" ] && echo "    uds-core: golden-uds-core"
 echo "╚═══════════════════════════════════════════════════════════════╝"

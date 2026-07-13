@@ -52,7 +52,8 @@ jobs:
       # RAM (16GB+), and large disk (200GB+). Standard GitHub-hosted runners cannot
       # build the VM images or run the full e2e stack. Re-enable once a self-hosted
       # runner is configured with the appropriate labels. Run manually in the meantime:
-      #   uds run build:image && uds run build:zarf-package
+      #   uds run build-image
+      #   uds run build:zarf-package --with build_command='uds run build-image && uds zarf package create . --confirm --no-progress --architecture=amd64 --output "$PWD"'
       #   uds run vouch:package ...
       #   uds run publish:zarf-package ...
 
@@ -60,14 +61,14 @@ jobs:
       # embed it. No registry push — the image lives only inside the zarf package.
       - name: Build image
         if: false
-        run: uds run build:image
+        run: uds run build-image
 
       # Builds zarf.yaml only. ZARF_VAR_IMAGE matches the tag built above so
       # Zarf finds the image in the local daemon and embeds it in the package.
       # The UDS bundle (bundle/) must be built on internal DU infrastructure.
       - name: Build zarf package
         if: false
-        run: uds run build:zarf-package
+        run: uds run build:zarf-package --with build_command='uds run build-image && uds zarf package create . --confirm --no-progress --architecture=amd64 --output "$PWD"'
 
       - name: Vouch
         if: false

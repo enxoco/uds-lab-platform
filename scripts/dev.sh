@@ -17,5 +17,4 @@ exec uds run dev \
   --with SKIP_IMAGES="${SKIP_IMAGES:-0}" \
   --with SKIP_WIPE="${SKIP_WIPE:-0}" \
   --with SKIP_BASE="${SKIP_BASE:-0}" \
-  --with SKIP_TOOLS="${SKIP_TOOLS:-0}" \
   --with SKIP_UDS_CORE="${SKIP_UDS_CORE:-0}"
