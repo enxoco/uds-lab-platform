@@ -294,7 +294,7 @@ func (s *server) adminCSM(w http.ResponseWriter, r *http.Request) {
 		if sess.SessionType == "demo" {
 			continue
 		}
-		// Skip sessions that expired more than 30 days ago.
+		// Skip sessions that expired more than 30 days ago from the dashboard.
 		if sess.Status == session.StatusExpired && sess.ExpiresAt.Before(cutoff) {
 			continue
 		}

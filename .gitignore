@@ -23,4 +23,4 @@ node_modules/
 web/ide-src/
 .codegraph/
 
-labserver
+/labserver

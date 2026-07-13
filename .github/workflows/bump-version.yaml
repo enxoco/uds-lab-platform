@@ -41,29 +41,38 @@ jobs:
 
       - name: Compute new version
         id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP_TYPE: ${{ inputs.bump_type }}
         run: |
           CURRENT=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
           echo "current=$CURRENT"
 
-          if [ -n "${{ inputs.version }}" ]; then
-            NEW="${{ inputs.version }}"
+          if [ -n "$INPUT_VERSION" ]; then
+            NEW="$INPUT_VERSION"
           else
             IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
-            case "${{ inputs.bump_type }}" in
+            case "$INPUT_BUMP_TYPE" in
               major) NEW="$((MAJ+1)).0.0" ;;
               minor) NEW="${MAJ}.$((MIN+1)).0" ;;
               patch) NEW="${MAJ}.${MIN}.$((PAT+1))" ;;
+              *) echo "invalid bump_type: $INPUT_BUMP_TYPE" >&2; exit 1 ;;
             esac
+          fi
+
+          if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version must match X.Y.Z: $NEW" >&2
+            exit 1
           fi
 
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           echo "new=$NEW"         >> $GITHUB_OUTPUT
 
       - name: Update version strings
+        env:
+          OLD: ${{ steps.ver.outputs.current }}
+          NEW: ${{ steps.ver.outputs.new }}
         run: |
-          OLD="${{ steps.ver.outputs.current }}"
-          NEW="${{ steps.ver.outputs.new }}"
-
           # zarf.yaml — package version, chart version reference, image tag, IMAGE default
           sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" zarf.yaml
           sed -i "s/^        version: ${OLD}$/        version: ${NEW}/" zarf.yaml
@@ -94,11 +103,13 @@ jobs:
           grep "version:" packages/vm-images/zarf.yaml
 
       - name: Commit and tag
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add zarf.yaml chart/Chart.yaml bundle/uds-bundle.yaml packages/vm-images/zarf.yaml
-          git commit -m "chore: bump version to ${{ steps.ver.outputs.new }}"
-          git tag "v${{ steps.ver.outputs.new }}"
+          git commit -m "chore: bump version to $NEW"
+          git tag "v$NEW"
           git push origin HEAD:master
-          git push origin "v${{ steps.ver.outputs.new }}"
+          git push origin "v$NEW"

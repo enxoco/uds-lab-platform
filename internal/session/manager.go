@@ -174,9 +174,9 @@ func (m *Manager) GetActive(ctx context.Context, clientID string) (*Session, boo
 	return nil, false
 }
 
-// Delete hard-deletes the LabSession CR immediately (bypasses the 30-day
-// history window). Prefer Expire for user-visible delete operations so the CSM
-// dashboard retains completed-step history.
+// Delete hard-deletes the LabSession CR immediately (bypasses the dashboard's
+// 30-day history display). Prefer Expire for user-visible delete operations so
+// the CSM dashboard retains completed-step history.
 func (m *Manager) Delete(ctx context.Context, id string) error {
 	ls := &labv1.LabSession{}
 	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
@@ -187,7 +187,9 @@ func (m *Manager) Delete(ctx context.Context, id string) error {
 
 // Expire sets ExpiresAt to now, triggering the operator to tear down the VM
 // while retaining the CR so the CSM dashboard can read completed steps for up
-// to 30 days. This is the preferred delete path for user-visible operations.
+// to 30 days. Physical cleanup after that display window is not implemented
+// yet; see the controller TODO. This is the preferred delete path for
+// user-visible operations.
 func (m *Manager) Expire(ctx context.Context, id string) error {
 	ls := &labv1.LabSession{}
 	if err := m.client.Get(ctx, client.ObjectKey{Name: id, Namespace: m.namespace}, ls); err != nil {
