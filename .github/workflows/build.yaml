@@ -38,7 +38,7 @@ jobs:
       - run: |
           uds run olm:generate-fulcio-token \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="enxoco" \
+            --with olm_org="uds-army-demo" \
             --with github_token="${{ secrets.GITHUB_TOKEN }}"
       - name: Lint
         run: uds run attest:lint
@@ -51,35 +51,35 @@ jobs:
       # Build the image into the local Docker daemon so zarf package create can
       # embed it. No registry push — the image lives only inside the zarf package.
       - name: Build image
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: uds run build:image
 
       # Builds zarf.yaml only. ZARF_VAR_IMAGE matches the tag built above so
       # Zarf finds the image in the local daemon and embeds it in the package.
       # The UDS bundle (bundle/) must be built on internal DU infrastructure.
       - name: Build zarf package
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: uds run build:zarf-package
 
       - name: Vouch
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           uds run vouch:package \
             --with attestations="lint-witness.json,gitleaks-witness.json,opengrep-witness.json,zarf-create-witness.json" \
             --with sarif_files="gitleaks.sarif.json,opengrep.sarif.json" \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="enxoco"
+            --with olm_org="uds-army-demo"
 
       - name: Publish zarf package
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           uds run publish:zarf-package \
-            --with registry_org="enxoco" \
+            --with registry_org="uds-army-demo" \
             --with registry_user_id="${{ secrets.REGISTRY_USER_ID }}" \
             --with registry_password="${{ secrets.REGISTRY_PASSWORD }}"
 
       - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

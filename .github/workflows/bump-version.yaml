@@ -41,37 +41,28 @@ jobs:
 
       - name: Compute new version
         id: ver
-        env:
-          VERSION_INPUT: ${{ inputs.version }}
-          BUMP_TYPE: ${{ inputs.bump_type }}
         run: |
           CURRENT=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
           echo "current=$CURRENT"
 
-          if [ -n "$VERSION_INPUT" ]; then
-            NEW="$VERSION_INPUT"
+          if [ -n "${{ inputs.version }}" ]; then
+            NEW="${{ inputs.version }}"
           else
             IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
-            case "$BUMP_TYPE" in
+            case "${{ inputs.bump_type }}" in
               major) NEW="$((MAJ+1)).0.0" ;;
               minor) NEW="${MAJ}.$((MIN+1)).0" ;;
               patch) NEW="${MAJ}.${MIN}.$((PAT+1))" ;;
             esac
           fi
 
-          if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "ERROR: invalid version '$NEW' — must be X.Y.Z"
-            exit 1
-          fi
-
           echo "current=$CURRENT" >> $GITHUB_OUTPUT
           echo "new=$NEW"         >> $GITHUB_OUTPUT
 
       - name: Update version strings
-        env:
-          OLD: ${{ steps.ver.outputs.current }}
-          NEW: ${{ steps.ver.outputs.new }}
         run: |
+          OLD="${{ steps.ver.outputs.current }}"
+          NEW="${{ steps.ver.outputs.new }}"
 
           # zarf.yaml — package version, chart version reference, image tag, IMAGE default
           sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" zarf.yaml
@@ -88,6 +79,9 @@ jobs:
           sed -i "s/^  version: \"${OLD}\"$/  version: \"${NEW}\"/" bundle/uds-bundle.yaml
           sed -i "s/^    ref: \"${OLD}\"$/    ref: \"${NEW}\"/" bundle/uds-bundle.yaml
 
+          # packages/vm-images/zarf.yaml — must stay in sync with the bundle ref above
+          sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" packages/vm-images/zarf.yaml
+
       - name: Verify changes
         run: |
           echo "=== zarf.yaml versions ==="
@@ -96,15 +90,15 @@ jobs:
           grep "version:" chart/Chart.yaml
           echo "=== bundle/uds-bundle.yaml ==="
           grep -E 'version:|ref:' bundle/uds-bundle.yaml
+          echo "=== packages/vm-images/zarf.yaml ==="
+          grep "version:" packages/vm-images/zarf.yaml
 
       - name: Commit and tag
-        env:
-          NEW: ${{ steps.ver.outputs.new }}
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add zarf.yaml chart/Chart.yaml bundle/uds-bundle.yaml
-          git commit -m "chore: bump version to ${NEW}"
-          git tag "v${NEW}"
+          git add zarf.yaml chart/Chart.yaml bundle/uds-bundle.yaml packages/vm-images/zarf.yaml
+          git commit -m "chore: bump version to ${{ steps.ver.outputs.new }}"
+          git tag "v${{ steps.ver.outputs.new }}"
           git push origin HEAD:master
-          git push origin "v${NEW}"
+          git push origin "v${{ steps.ver.outputs.new }}"
