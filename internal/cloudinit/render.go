@@ -10,7 +10,7 @@ import (
 	"bytes"
 	"fmt"
 	"io/fs"
-	"text/template"
+	"text/template" // nosemgrep: go.lang.security.audit.xss.import-text-template.import-text-template -- renders cloud-init YAML/shell, not HTML
 )
 
 // Input is the data the user-data template expects.

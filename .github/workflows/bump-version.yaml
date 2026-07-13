@@ -1,0 +1,115 @@
+name: Bump Version
+
+# Bumps the version across all manifests, commits, tags, and pushes.
+# The tag push triggers the CI workflow which builds and publishes the release.
+#
+# Usage:
+#   GitHub UI → Actions → Bump Version → Run workflow
+#   Supply either `version` (explicit, e.g. "0.2.0") or `bump_type` (patch/minor/major).
+#   If both are supplied, `version` wins.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Explicit new version (e.g. 0.2.0). Overrides bump_type."
+        required: false
+        default: ""
+      bump_type:
+        description: "Semver increment to apply when version is not set."
+        required: false
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+
+jobs:
+  bump:
+    name: Bump version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Use a PAT so the pushed tag triggers downstream CI.
+          # Falls back to GITHUB_TOKEN — note: tag-triggered workflows are skipped
+          # when GITHUB_TOKEN pushes the tag (GitHub security model).
+          token: ${{ secrets.RELEASE_PAT || secrets.GITHUB_TOKEN }}
+
+      - name: Compute new version
+        id: ver
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP_TYPE: ${{ inputs.bump_type }}
+        run: |
+          CURRENT=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
+          echo "current=$CURRENT"
+
+          if [ -n "$INPUT_VERSION" ]; then
+            NEW="$INPUT_VERSION"
+          else
+            IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
+            case "$INPUT_BUMP_TYPE" in
+              major) NEW="$((MAJ+1)).0.0" ;;
+              minor) NEW="${MAJ}.$((MIN+1)).0" ;;
+              patch) NEW="${MAJ}.${MIN}.$((PAT+1))" ;;
+              *) echo "invalid bump_type: $INPUT_BUMP_TYPE" >&2; exit 1 ;;
+            esac
+          fi
+
+          if [[ ! "$NEW" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "version must match X.Y.Z: $NEW" >&2
+            exit 1
+          fi
+
+          echo "current=$CURRENT" >> $GITHUB_OUTPUT
+          echo "new=$NEW"         >> $GITHUB_OUTPUT
+
+      - name: Update version strings
+        env:
+          OLD: ${{ steps.ver.outputs.current }}
+          NEW: ${{ steps.ver.outputs.new }}
+        run: |
+          # zarf.yaml — package version, chart version reference, image tag, IMAGE default
+          sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" zarf.yaml
+          sed -i "s/^        version: ${OLD}$/        version: ${NEW}/" zarf.yaml
+          sed -i "s/^    default: lab-platform:${OLD}$/    default: lab-platform:${NEW}/" zarf.yaml
+          sed -i "s/^      - lab-platform:${OLD}$/      - lab-platform:${NEW}/" zarf.yaml
+
+          # chart/Chart.yaml
+          sed -i "s/^version: ${OLD}$/version: ${NEW}/" chart/Chart.yaml
+
+          # bundle/uds-bundle.yaml — bundle version and the uds-lab-platform ref.
+          # sed targets the quoted forms to avoid touching external package refs
+          # like 'ref: v1.8.4-uds.1-upstream'.
+          sed -i "s/^  version: \"${OLD}\"$/  version: \"${NEW}\"/" bundle/uds-bundle.yaml
+          sed -i "s/^    ref: \"${OLD}\"$/    ref: \"${NEW}\"/" bundle/uds-bundle.yaml
+
+          # packages/vm-images/zarf.yaml — must stay in sync with the bundle ref above
+          sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" packages/vm-images/zarf.yaml
+
+      - name: Verify changes
+        run: |
+          echo "=== zarf.yaml versions ==="
+          grep "version:" zarf.yaml
+          echo "=== chart/Chart.yaml ==="
+          grep "version:" chart/Chart.yaml
+          echo "=== bundle/uds-bundle.yaml ==="
+          grep -E 'version:|ref:' bundle/uds-bundle.yaml
+          echo "=== packages/vm-images/zarf.yaml ==="
+          grep "version:" packages/vm-images/zarf.yaml
+
+      - name: Commit and tag
+        env:
+          NEW: ${{ steps.ver.outputs.new }}
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add zarf.yaml chart/Chart.yaml bundle/uds-bundle.yaml packages/vm-images/zarf.yaml
+          git commit -m "chore: bump version to $NEW"
+          git tag "v$NEW"
+          git push origin HEAD:master
+          git push origin "v$NEW"

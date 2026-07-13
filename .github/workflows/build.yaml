@@ -1,5 +1,16 @@
 name: CI
 
+# Artifacts produced by this workflow:
+#   - zarf-package-uds-lab-platform-amd64-<version>.tar.zst  → published to UDS Army pipeline
+#
+# The lab-platform image is built locally and embedded in the zarf package by
+# `zarf package create`. It is NOT pushed to GHCR separately — the zarf package
+# and UDS bundle are the sole release artifacts.
+#
+# The UDS bundle (bundle/uds-bundle.yaml) depends on ghcr.io/uds-packages/kubevirt,
+# a Defense Unicorns internal package. Never add bundle-build or bundle-publish
+# steps to this workflow.
+
 on:
   push:
     branches: [master]
@@ -7,15 +18,12 @@ on:
   pull_request:
     branches: [master]
 
-env:
-  IMAGE: ghcr.io/enxoco/uds-lab-platform
-
 jobs:
   ci:
     name: CI
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write   # needed to create GitHub Releases on tag pushes
       packages: write
       id-token: write
     steps:
@@ -30,7 +38,7 @@ jobs:
       - run: |
           uds run olm:generate-fulcio-token \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="uds-army-demo" \
+            --with olm_org="enxoco" \
             --with github_token="${{ secrets.GITHUB_TOKEN }}"
       - name: Lint
         run: uds run attest:lint
@@ -39,64 +47,44 @@ jobs:
           uds run scan:security \
             --with gitleaks_scan_path="." \
             --with opengrep_scan_path="."
-      - name: Set up Docker Buildx
-        if: github.event_name == 'push'
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - name: Log in to GHCR
-        if: github.event_name == 'push'
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Extract metadata
-        if: github.event_name == 'push'
-        id: meta
-        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
-        with:
-          images: ${{ env.IMAGE }}
-          tags: |
-            type=sha,prefix=,format=short
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' }}
-            type=raw,value=dev
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-      - name: Build and load image (amd64)
-        if: github.event_name == 'push'
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ env.IMAGE }}:dev
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-      - name: Save image tar for zarf
-        if: github.event_name == 'push'
-        run: docker save ${{ env.IMAGE }}:dev -o ./lab-server.tar
-      - name: Tag and push to GHCR
-        if: github.event_name == 'push'
-        run: |
-          echo "${{ steps.meta.outputs.tags }}" | grep -v '^$' | while IFS= read -r tag; do
-            docker tag ${{ env.IMAGE }}:dev "$tag"
-            docker push "$tag"
-          done
+
+      # Build the image into the local Docker daemon so zarf package create can
+      # embed it. No registry push — the image lives only inside the zarf package.
+      - name: Build image
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: uds run build:image
+
+      # Builds zarf.yaml only. ZARF_VAR_IMAGE matches the tag built above so
+      # Zarf finds the image in the local daemon and embeds it in the package.
+      # The UDS bundle (bundle/) must be built on internal DU infrastructure.
       - name: Build zarf package
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: uds run build:zarf-package
+
       - name: Vouch
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           uds run vouch:package \
             --with attestations="lint-witness.json,gitleaks-witness.json,opengrep-witness.json,zarf-create-witness.json" \
             --with sarif_files="gitleaks.sarif.json,opengrep.sarif.json" \
             --with olm_cat="cat-api.uds-mil.us" \
-            --with olm_org="uds-army-demo"
+            --with olm_org="enxoco"
+
       - name: Publish zarf package
-        if: github.event_name == 'push'
+        if: startsWith(github.ref, 'refs/tags/v')
         run: |
           uds run publish:zarf-package \
-            --with registry_org="uds-army-demo" \
+            --with registry_org="enxoco" \
             --with registry_user_id="${{ secrets.REGISTRY_USER_ID }}" \
             --with registry_password="${{ secrets.REGISTRY_PASSWORD }}"
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "v${VERSION}" \
+            --generate-notes \
+            zarf-package-uds-lab-platform-amd64-${VERSION}.tar.zst

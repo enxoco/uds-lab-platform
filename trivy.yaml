@@ -1,0 +1,6 @@
+scan:
+  skip-files:
+    # Local SSH key used only during Packer image builds.
+    # Listed in .gitignore and never committed to the repository.
+    # Only present in developer working trees during active image development.
+    - packer/packer-key

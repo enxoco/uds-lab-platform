@@ -61,7 +61,7 @@ This will:
 4. Build and deploy the lab-platform Docker image
 5. Import golden PVCs from the built qcow2s
 6. Patch CoreDNS to route `*.uds.dev` to MetalLB gateways
-7. Create a test Keycloak user (`doug / unicorn123!@#UN`)
+7. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
 8. Start the nginx SNI proxy for external access
 
 ### Skip packer (images already built)
@@ -85,7 +85,7 @@ uds run redeploy
 After the script completes:
 - UI: `https://lab.uds.dev`
 - Admin: `https://keycloak.admin.uds.dev`
-- Test user: `doug / unicorn123!@#UN`
+- Test user: `doug@uds.dev / unicorn123!@#UN`
 
 > **Note:** If you redeploy manually (not via `dev.sh`), always re-run
 > `./scripts/patch-coredns.sh` afterward — redeploys reset the CoreDNS NodeHosts.

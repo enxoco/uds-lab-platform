@@ -1,3 +1,9 @@
+# INTERNAL USE ONLY — do not build or publish from public CI.
+#
+# This bundle depends on ghcr.io/uds-packages/kubevirt, a Defense Unicorns
+# internal package that is not accessible from public GitHub Actions runners.
+# Build manually on internal DU infrastructure:
+#   uds run build-bundle
 kind: UDSBundle
 metadata:
   name: uds-lab-platform

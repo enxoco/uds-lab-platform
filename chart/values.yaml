@@ -1,10 +1,16 @@
 domain: uds.dev
-image: ghcr.io/enxoco/uds-lab-platform:dev-local
+image: ghcr.io/enxoco/uds-lab-platform:latest
 vmNamespace: uds-lab-vms
 sessionTTLMinutes: 60
 
-# Operator config — maps image tiers to pre-populated golden PVCs.
-# CDI clones one golden PVC per lab session instead of importing from a registry.
+# Provider backend: "kubevirt" (production) or "pod" (dev / no nested-virt).
+# KubeVirt-specific RBAC and the golden-PVC config are only rendered when
+# provider is "kubevirt".
+provider: kubevirt
+
+# KubeVirt-only: golden PVC names that CDI clones per session.
+# Ignored when provider != "kubevirt".
+# These names match what create-golden-pvc.sh produces.
 goldenPVCs:
   base: golden-base
   tools: golden-tools

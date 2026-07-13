@@ -65,11 +65,11 @@ The app is behind Keycloak SSO. Before you can reach it in the browser, create t
 cd /root/myapp && uds run setup:keycloak-user --with group="/UDS Core/Admin"
 ```
 
-This creates **doug** in Keycloak with password `unicorn123!@#UN`.
+This creates **doug@uds.dev** in Keycloak with password `unicorn123!@#UN`.
 
 ## Open the app in the browser
 
-Once the pod is Running and the Keycloak user is created, click the **myapp** service chip that appears in the browser panel above. You'll be redirected to Keycloak — log in as `doug` with password `unicorn123!@#UN`.
+Once the pod is Running and the Keycloak user is created, click the **myapp** service chip that appears in the browser panel above. You'll be redirected to Keycloak — log in as `doug@uds.dev` with password `unicorn123!@#UN`.
 
 You should land on the "Hello from UDS!" page. The request traveled through:
 

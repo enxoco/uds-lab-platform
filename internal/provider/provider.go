@@ -45,4 +45,7 @@ type Provider interface {
 	// SnapshotReady returns true when the named VolumeSnapshot is ready to use
 	// as a DataVolume source.
 	SnapshotReady(ctx context.Context, snapName string) (bool, error)
+	// DeleteSnapshot deletes the named VolumeSnapshot. It is idempotent:
+	// a not-found error is treated as success.
+	DeleteSnapshot(ctx context.Context, snapName string) error
 }
