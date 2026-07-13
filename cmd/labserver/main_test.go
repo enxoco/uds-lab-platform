@@ -72,7 +72,9 @@ func TestDemoTokenWrongKey(t *testing.T) {
 }
 
 func TestDemoTokenTruncated(t *testing.T) {
-	_, err := validateDemoToken(testKey, "dG9vLXNob3J0")
+	expUnix := time.Now().Add(24 * time.Hour).Unix()
+	_, token, _ := generateDemoToken(testKey, "uds-package", "ae@company.com", expUnix)
+	_, err := validateDemoToken(testKey, token[:8])
 	if err == nil {
 		t.Error("expected error for truncated token, got nil")
 	}
