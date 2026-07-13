@@ -1,0 +1,2 @@
+FROM scratch
+COPY lab-playground-uds-core.qcow2 /disk/

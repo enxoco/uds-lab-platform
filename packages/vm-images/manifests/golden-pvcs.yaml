@@ -1,0 +1,44 @@
+---
+# Golden PVCs populated via CDI registry import from the Zarf in-cluster registry.
+# ###ZARF_REGISTRY### is substituted by Zarf at deploy time with the internal
+# registry address (e.g. 127.0.0.1:31999 or the in-cluster service).
+# Zarf automatically creates private-registry pull secret in each component namespace.
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: golden-base
+  namespace: uds-lab-vms
+  labels:
+    lab.uds.dev/golden-pvc: "true"
+    lab.uds.dev/tier: base
+spec:
+  source:
+    registry:
+      url: "docker://###ZARF_REGISTRY###/lab-vm-images/base:###ZARF_PKG_TMPL_VERSION###"
+      secretRef: private-registry
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+---
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: golden-uds-core
+  namespace: uds-lab-vms
+  labels:
+    lab.uds.dev/golden-pvc: "true"
+    lab.uds.dev/tier: uds-core
+spec:
+  source:
+    registry:
+      url: "docker://###ZARF_REGISTRY###/lab-vm-images/uds-core:###ZARF_PKG_TMPL_VERSION###"
+      secretRef: private-registry
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 80Gi

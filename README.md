@@ -269,6 +269,20 @@ vm/             # user-data.sh.gotmpl — cloud-init for lab VMs
 scenarios/      # lab scenario definitions
 ```
 
+### Release process
+
+CI (GitHub Actions) builds and publishes **only the lab-platform Zarf package** (`zarf-package-uds-lab-platform-*.tar.zst`). This happens automatically when a version tag is pushed via the bump-version workflow:
+
+```bash
+# GitHub UI: Actions → Bump Version → Run workflow → select minor/major/patch
+# Or via CLI:
+gh workflow run bump-version.yaml -f bump_type=minor
+```
+
+The UDS bundle (`bundle/uds-bundle.yaml`) depends on `ghcr.io/uds-packages/kubevirt`, a Defense Unicorns internal package. **The bundle must never be built or published from public CI** — it can only be assembled on internal DU infrastructure with access to that registry. The bundle is for local dev use only; `uds run build-bundle` and `uds run deploy-bundle` are not run by any CI workflow.
+
+The KubeVirt package is referenced in the bundle exclusively via its OCI registry URL. No KubeVirt tarballs are ever committed to this repo or produced by CI.
+
 ### Iterating on the operator
 
 ```bash

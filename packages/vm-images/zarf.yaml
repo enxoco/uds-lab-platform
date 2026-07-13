@@ -1,0 +1,49 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/zarf-dev/zarf/main/zarf.schema.json
+apiVersion: zarf.dev/v1alpha1
+
+kind: ZarfPackageConfig
+metadata:
+  name: lab-vm-images
+  description: Lab playground VM images — packaged as OCI artifacts for CDI registry import
+  version: 0.1.0
+
+# Build this package after running `uds run build-images` to produce qcow2 outputs.
+# The build-vm-images-package task in tasks.yaml handles the full workflow:
+#   1. Build qcow2 container images from packer output
+#   2. zarf package create packages/vm-images/
+
+components:
+  - name: vm-images
+    required: true
+    description: Base and uds-core VM images as OCI artifacts + CDI DataVolumes
+    actions:
+      onDeploy:
+        before:
+          - description: Copy Zarf pull secret into uds-lab-vms for CDI importer
+            cmd: |
+              kubectl create namespace uds-lab-vms --dry-run=client -o yaml | kubectl apply -f -
+              # Zarf creates pull secrets per-namespace for pod-based workloads via its
+              # mutating webhook. CDI importer pods pull via DataVolume secretRef, bypassing
+              # that mechanism. Copy the secret from a namespace Zarf already created it in.
+              for ns in keycloak istio-system kubevirt zarf; do
+                if kubectl get secret private-registry -n "$ns" &>/dev/null 2>&1; then
+                  kubectl get secret private-registry -n "$ns" -o json \
+                    | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.annotations)
+                          | .metadata.namespace = "uds-lab-vms"' \
+                    | kubectl apply -f -
+                  echo "Copied private-registry from $ns to uds-lab-vms"
+                  break
+                fi
+              done
+    imageArchives:
+      - path: base.tar
+        images:
+          - lab-vm-images/base:0.1.0
+      - path: uds-core.tar
+        images:
+          - lab-vm-images/uds-core:0.1.0
+    manifests:
+      - name: golden-pvcs
+        namespace: uds-lab-vms
+        files:
+          - manifests/golden-pvcs.yaml

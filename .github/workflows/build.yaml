@@ -48,21 +48,29 @@ jobs:
             --with gitleaks_scan_path="." \
             --with opengrep_scan_path="."
 
+      # TODO: These steps require a self-hosted runner with /dev/kvm, sufficient
+      # RAM (16GB+), and large disk (200GB+). Standard GitHub-hosted runners cannot
+      # build the VM images or run the full e2e stack. Re-enable once a self-hosted
+      # runner is configured with the appropriate labels. Run manually in the meantime:
+      #   uds run build:image && uds run build:zarf-package
+      #   uds run vouch:package ...
+      #   uds run publish:zarf-package ...
+
       # Build the image into the local Docker daemon so zarf package create can
       # embed it. No registry push — the image lives only inside the zarf package.
       - name: Build image
-        if: github.event_name == 'push'
+        if: false
         run: uds run build:image
 
       # Builds zarf.yaml only. ZARF_VAR_IMAGE matches the tag built above so
       # Zarf finds the image in the local daemon and embeds it in the package.
       # The UDS bundle (bundle/) must be built on internal DU infrastructure.
       - name: Build zarf package
-        if: github.event_name == 'push'
+        if: false
         run: uds run build:zarf-package
 
       - name: Vouch
-        if: github.event_name == 'push'
+        if: false
         run: |
           uds run vouch:package \
             --with attestations="lint-witness.json,gitleaks-witness.json,opengrep-witness.json,zarf-create-witness.json" \
@@ -71,7 +79,7 @@ jobs:
             --with olm_org="uds-army-demo"
 
       - name: Publish zarf package
-        if: github.event_name == 'push'
+        if: false
         run: |
           uds run publish:zarf-package \
             --with registry_org="uds-army-demo" \
@@ -79,7 +87,7 @@ jobs:
             --with registry_password="${{ secrets.REGISTRY_PASSWORD }}"
 
       - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        if: false
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

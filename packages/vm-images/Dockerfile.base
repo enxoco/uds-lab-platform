@@ -1,0 +1,2 @@
+FROM scratch
+COPY lab-base.qcow2 /disk/

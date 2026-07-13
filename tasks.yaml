@@ -9,6 +9,30 @@ includes:
   - uds-setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
 
 tasks:
+  # ── Clean build artifacts ─────────────────────────────────────────────────────
+
+  - name: clean-artifacts
+    description: Remove all built Zarf packages, UDS bundles, and image tarballs
+    inputs:
+      skip:
+        description: Set to 1 to skip (used by dev when SKIP_WIPE=1)
+        default: "0"
+    actions:
+      - description: Remove build artifacts
+        cmd: |
+          if [ "${{ .inputs.skip }}" = "1" ]; then
+            echo "Skipping artifact clean"
+            exit 0
+          fi
+          echo "Cleaning build artifacts..."
+          rm -f zarf-package-*.tar.zst lab-server.tar uds-lab-platform-*.tar
+          rm -f bundle/uds-bundle-*.tar.zst
+          rm -f packages/cdi/zarf-package-*.tar.zst
+          rm -f packages/vm-images/zarf-package-*.tar.zst
+          rm -f packages/vm-images/base.tar packages/vm-images/tools.tar packages/vm-images/uds-core.tar
+          rm -rf ~/.cache/zarf-tmp
+          echo "Done."
+
   # ── Lint ─────────────────────────────────────────────────────────────────────
 
   - name: lint
@@ -19,19 +43,16 @@ tasks:
 
   # ── Build VM images ───────────────────────────────────────────────────────────
   # Full packer run takes 60+ min. Pass skip=1 to skip image builds entirely,
-  # or skip individual tiers with skip_base/skip_tools/skip_uds_core.
+  # or skip individual tiers with skip_base/skip_uds_core.
 
   - name: build-images
-    description: Build VM qcow2 images with packer (base → tools → uds-core)
+    description: Build VM qcow2 images with packer (base → uds-core)
     inputs:
       skip:
         description: Skip all packer builds (1 = skip)
         default: "0"
       skip_base:
         description: Skip base image build
-        default: "0"
-      skip_tools:
-        description: Skip tools image build
         default: "0"
       skip_uds_core:
         description: Skip UDS Core image build
@@ -51,7 +72,6 @@ tasks:
           fi
           cd packer
           SKIP_BASE="${{ .inputs.skip_base }}" \
-          SKIP_TOOLS="${{ .inputs.skip_tools }}" \
           SKIP_UDS_CORE="${{ .inputs.skip_uds_core }}" \
           ./build-images-qemu.sh
         maxTotalSeconds: 7200
@@ -113,7 +133,7 @@ tasks:
           fi
           # --disable=traefik  → avoids gateway-api CRD conflict with UDS Core
           # --disable=servicelb → replaced by MetalLB for separate admin+tenant IPs
-          curl -sfL https://get.k3s.io | sh -s - --disable=traefik --disable=servicelb
+          curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.36.2+k3s1 sh -s - --disable=traefik --disable=servicelb
           mkdir -p "$HOME/.kube"
           sudo cp /etc/rancher/k3s/k3s.yaml "$HOME/.kube/config"
           sudo chown "$(id -u):$(id -g)" "$HOME/.kube/config"
@@ -229,6 +249,44 @@ tasks:
           zarf package create . --confirm --skip-sbom
         maxTotalSeconds: 600
 
+  - name: build-vm-images-package
+    description: |
+      Build the lab-vm-images Zarf package from packer qcow2 outputs.
+      Wraps each qcow2 as an OCI container image (FROM scratch), then
+      packages them with CDI DataVolume manifests for registry-based import.
+      Run uds run build-images first to produce the qcow2 files.
+    inputs:
+      base_qcow2:
+        description: Path to base qcow2 (combined base+tools image)
+        default: packer/output/base/lab-base.qcow2
+      uds_core_qcow2:
+        description: Path to uds-core qcow2
+        default: packer/output/uds-core/lab-playground-uds-core.qcow2
+    actions:
+      - description: Build OCI container images from qcow2 files and save as tarballs
+        maxTotalSeconds: 600
+        cmd: |
+          VERSION=$(grep '^  version:' packages/vm-images/zarf.yaml | head -1 | awk '{print $2}')
+          build_image() {
+            local tag="$1" dockerfile="$2" context_dir="$3" tarname="$4"
+            if [ ! -d "$context_dir" ] || [ -z "$(ls "$context_dir"/*.qcow2 2>/dev/null)" ]; then
+              echo "SKIP: no qcow2 in $context_dir — skipping $tag"
+              return 0
+            fi
+            echo "Building $tag from $context_dir..."
+            docker build -t "${tag}:${VERSION}" -f "$dockerfile" "$context_dir"
+            echo "Saving ${tag}:${VERSION} → packages/vm-images/${tarname}"
+            docker save "${tag}:${VERSION}" -o "packages/vm-images/${tarname}"
+          }
+          build_image lab-vm-images/base     packages/vm-images/Dockerfile.base     "$(dirname "${{ .inputs.base_qcow2 }}")"     base.tar
+          build_image lab-vm-images/uds-core packages/vm-images/Dockerfile.uds-core "$(dirname "${{ .inputs.uds_core_qcow2 }}")" uds-core.tar
+      - description: Build Zarf package
+        maxTotalSeconds: 3600
+        cmd: |
+          mkdir -p ~/.cache/zarf-tmp
+          cd packages/vm-images
+          zarf package create . --confirm --skip-sbom --tmpdir ~/.cache/zarf-tmp
+
   - name: build-image
     description: Build and save the lab-platform Docker image, tagged lab-platform:<zarf-version>
     actions:
@@ -243,14 +301,18 @@ tasks:
     description: Build the uds-lab-platform Zarf package
     actions:
       - description: Build Zarf package
-        cmd: zarf package create . --confirm --skip-sbom
+        cmd: |
+          mkdir -p ~/.cache/zarf-tmp
+          zarf package create . --confirm --skip-sbom --tmpdir ~/.cache/zarf-tmp
         maxTotalSeconds: 600
 
   - name: build-bundle
     description: Build the UDS bundle from bundle/
     actions:
       - description: Create UDS bundle
-        cmd: uds create bundle/ --confirm
+        cmd: |
+          mkdir -p /home/mikeconrad/.cache/zarf-tmp
+          UDS_TMP_DIR=/home/mikeconrad/.cache/zarf-tmp uds create bundle/ --confirm
         maxTotalSeconds: 600
 
   - name: clear-operator-crds
@@ -466,6 +528,7 @@ tasks:
           dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
           skip_if_exists: ${{ .inputs.SKIP_WIPE }}
       - task: build-cdi
+      - task: build-vm-images-package
       - task: build-image
       - task: build-lab-package
       - task: build-bundle
@@ -654,9 +717,6 @@ tasks:
       SKIP_BASE:
         description: Skip base image build
         default: "0"
-      SKIP_TOOLS:
-        description: Skip tools image build
-        default: "0"
       SKIP_UDS_CORE:
         description: Skip UDS Core image build
         default: "0"
@@ -667,11 +727,13 @@ tasks:
         description: Force-skip golden PVC import (default 0 = auto-import if qcow2s exist)
         default: "0"
     actions:
+      - task: clean-artifacts
+        with:
+          skip: ${{ .inputs.SKIP_WIPE }}
       - task: build-images
         with:
           skip: ${{ .inputs.SKIP_IMAGES }}
           skip_base: ${{ .inputs.SKIP_BASE }}
-          skip_tools: ${{ .inputs.SKIP_TOOLS }}
           skip_uds_core: ${{ .inputs.SKIP_UDS_CORE }}
       - task: cluster-up
         with:

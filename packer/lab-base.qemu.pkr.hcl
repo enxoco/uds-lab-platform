@@ -18,7 +18,8 @@ source "qemu" "lab-base" {
   output_directory = "output/base"
   vm_name          = "lab-base.qcow2"
 
-  # Expand disk to 20G; cloud-init growpart fills it.
+  # Combined base + tools image: Ubuntu + Chrome + VNC + ttyd + Docker + k3d + uds CLI.
+  # Actual content ~4.7G; 20G gives headroom for package downloads during lab sessions.
   disk_size = "20G"
   cpus      = 4
   memory    = 4096

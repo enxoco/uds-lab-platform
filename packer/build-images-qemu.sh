@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Build all lab qcow2 images in order: base → playground-tools → playground-uds-core.
+# Build all lab qcow2 images in order: base → uds-core.
+# The base image combines what were previously the separate base and tools stages.
 # Each stage uses the previous stage's qcow2 as its input disk.
 #
 # Prerequisites:
@@ -15,8 +16,7 @@
 #
 #   # Skip stages already built:
 #   SKIP_BASE=1 BASE_IMAGE=output/base/lab-base.qcow2 ./build-images-qemu.sh
-#   SKIP_BASE=1 SKIP_TOOLS=1 TOOLS_IMAGE=output/tools/lab-playground-tools.qcow2 ./build-images-qemu.sh
-#   SKIP_BASE=1 SKIP_TOOLS=1 SKIP_UDS_CORE=1 ./build-images-qemu.sh  # no-op (all skipped)
+#   SKIP_BASE=1 SKIP_UDS_CORE=1 ./build-images-qemu.sh  # no-op (all skipped)
 
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -45,13 +45,26 @@ fix_cloud_init() {
     || warn "virt-customize failed on $img — manually verify cloud-init is enabled"
 }
 
-# ── Stage 1: Base ─────────────────────────────────────────────────────────────
+# Compact a qcow2 by rewriting it without zero blocks (no compression).
+# fstrim inside the VM zeros free blocks; this step skips them in the output.
+# Safe for Docker overlay2 — this is NOT compression, just sparse-block skipping.
+compact_qcow2() {
+  local img="$1"
+  local tmp="${img}.compact.tmp"
+  log "Compacting $img (skipping zero blocks, no compression)..."
+  qemu-img convert -O qcow2 "$img" "$tmp"
+  mv "$tmp" "$img"
+  log "Compacted: $img ($(du -sh "$img" | cut -f1))"
+}
+
+# ── Stage 1: Base (Ubuntu + Chrome + VNC + ttyd + Docker + k3d + uds CLI) ────
 if [ "${SKIP_BASE:-0}" != "1" ]; then
-  log "Stage 1: base image (~10 min)..."
+  log "Stage 1: base image (~20 min)..."
   packer init lab-base.qemu.pkr.hcl
   packer build -force lab-base.qemu.pkr.hcl
   BASE_IMAGE="output/base/lab-base.qcow2"
   fix_cloud_init "$BASE_IMAGE"
+  compact_qcow2 "$BASE_IMAGE"
   log "Base image: $BASE_IMAGE ($(du -sh "$BASE_IMAGE" | cut -f1))"
 else
   BASE_IMAGE="${BASE_IMAGE:-output/base/lab-base.qcow2}"
@@ -60,32 +73,18 @@ else
   fix_cloud_init "$BASE_IMAGE"
 fi
 
-# ── Stage 2: Tools playground ─────────────────────────────────────────────────
-if [ "${SKIP_TOOLS:-0}" != "1" ]; then
-  log "Stage 2: tools playground (~15 min)..."
-  packer init lab-playground-tools.qemu.pkr.hcl
-  packer build -force \
-    -var "base_image=${BASE_IMAGE}" \
-    lab-playground-tools.qemu.pkr.hcl
-  TOOLS_IMAGE="output/tools/lab-playground-tools.qcow2"
-  fix_cloud_init "$TOOLS_IMAGE"
-  log "Tools image: $TOOLS_IMAGE ($(du -sh "$TOOLS_IMAGE" | cut -f1))"
-else
-  TOOLS_IMAGE="${TOOLS_IMAGE:-output/tools/lab-playground-tools.qcow2}"
-  [ -f "$TOOLS_IMAGE" ] || die "SKIP_TOOLS=1 but TOOLS_IMAGE not found: $TOOLS_IMAGE"
-  warn "Skipping tools build — using $TOOLS_IMAGE"
-  fix_cloud_init "$TOOLS_IMAGE"
-fi
-
-# ── Stage 3: UDS Core playground ─────────────────────────────────────────────
+# ── Stage 2: UDS Core playground ─────────────────────────────────────────────
 if [ "${SKIP_UDS_CORE:-0}" != "1" ]; then
-  log "Stage 3: UDS Core playground (~40 min — deploys full UDS Core)..."
+  log "Stage 2: UDS Core playground (~40 min — deploys full UDS Core)..."
   packer init lab-playground-uds-core.qemu.pkr.hcl
   packer build -force \
-    -var "tools_image=${TOOLS_IMAGE}" \
+    -var "base_image=${BASE_IMAGE}" \
     lab-playground-uds-core.qemu.pkr.hcl
   UDS_CORE_IMAGE="output/uds-core/lab-playground-uds-core.qcow2"
   fix_cloud_init "$UDS_CORE_IMAGE"
+  # No compact_qcow2 here — the uds-core image contains a stopped k3d cluster
+  # whose containers must survive in Docker storage intact. Rewriting the qcow2
+  # is safe in principle but unnecessary risk given prior overlay2 issues.
   log "UDS Core image: $UDS_CORE_IMAGE ($(du -sh "$UDS_CORE_IMAGE" | cut -f1))"
 else
   warn "Skipping UDS Core build"
@@ -95,15 +94,8 @@ fi
 echo ""
 echo "╔═══════════════════════════════════════════════════════════════╗"
 echo "  qcow2 images built and patched (cloud-init enabled)."
-echo "  Next: import into cluster as golden PVCs."
+echo "  Next: uds run build-vm-images-package && uds run deploy-bundle"
 echo ""
 echo "  Base:      ${BASE_IMAGE:-<skipped>}"
-echo "  Tools:     ${TOOLS_IMAGE:-<skipped>}"
 echo "  UDS Core:  ${UDS_CORE_IMAGE:-<skipped>}"
-echo ""
-echo "  Run from repo root:"
-echo "    SKIP_GOLDEN_PVC=0 \\"
-echo "    BASE_QCOW2=packer/output/base/lab-base.qcow2 \\"
-echo "    TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \\"
-echo "    SKIP_WIPE=1 ./scripts/dev-cluster-setup.sh"
 echo "╚═══════════════════════════════════════════════════════════════╝"

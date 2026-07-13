@@ -8,6 +8,13 @@ export HOME=/root
 
 log() { echo "[$(date '+%H:%M:%S')] $*"; }
 
+# ── Grow partition to fill disk ────────────────────────────────────────────────
+# cloud-init growpart does not reliably re-run on packer's subsequent image
+# builds. Grow explicitly so the full disk is available for Docker image pulls.
+log "Growing partition to fill disk..."
+growpart /dev/vda 1 || true
+resize2fs /dev/vda1 || true
+
 # Pinned bundle version — bump intentionally to upgrade UDS Core.
 # Using :latest caused a silent 1.7→1.8 breakage; always pin.
 UDS_CORE_BUNDLE="oci://ghcr.io/defenseunicorns/packages/uds/bundles/k3d-core-slim-dev:1.7.0"
@@ -35,9 +42,9 @@ uds deploy "${UDS_CORE_BUNDLE}" --confirm \
   --set AUTHSERVICE_REPLICA_COUNT=1 \
   --set KEYCLOAK_HA=false \
   --set KEYCLOAK_CPU_REQUEST=100m \
-  --set KEYCLOAK_CPU_LIMIT=1000m \
+  --set KEYCLOAK_CPU_LIMIT=3000m \
   --set KEYCLOAK_MEMORY_REQUEST=512Mi \
-  --set KEYCLOAK_MEMORY_LIMIT=1Gi \
+  --set KEYCLOAK_MEMORY_LIMIT=2Gi \
   --set KEYCLOAK_WAYPOINT_HPA_ENABLED=false \
   --set KEYCLOAK_WAYPOINT_CPU_REQUEST=100m \
   --set KEYCLOAK_WAYPOINT_MEMORY_REQUEST=64Mi \
