@@ -1,7 +1,7 @@
-# INTERNAL USE ONLY — do not build or publish from public CI.
+# INTERNAL USE ONLY - do not build or publish from public CI.
 #
-# This bundle depends on ghcr.io/uds-packages/kubevirt, a Defense Unicorns
-# internal package that is not accessible from public GitHub Actions runners.
+# This bundle depends on registry.uds-mil.us packages that are not accessible
+# from public GitHub Actions runners.
 # Build manually on internal DU infrastructure:
 #   uds run build-bundle
 kind: UDSBundle
@@ -87,5 +87,5 @@ packages:
   # VM images are packaged separately so they can be versioned and rebuilt
   # independently of the platform code. Build with: uds run build-vm-images-package
   - name: lab-vm-images
-    path: ../packages/vm-images
+    repository: registry.uds-mil.us/enxo/lab-vm-images
     ref: "0.1.0"

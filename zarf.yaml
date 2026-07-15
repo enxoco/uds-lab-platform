@@ -8,9 +8,6 @@ metadata:
   version: 0.1.0
 
 variables:
-  - name: IMAGE
-    description: Lab platform container image (contains both /lab-server and /lab-operator)
-    default: lab-platform:0.1.0
   - name: DOMAIN
     description: Base domain (e.g. uds.dev) — used by the UDS Package CR for Istio expose
     default: uds.dev
@@ -40,11 +37,8 @@ components:
           - name: DOMAIN
             description: Base domain for Istio expose
             path: domain
-          - name: IMAGE
-            description: Lab platform container image
-            path: image
           - name: PROVIDER
             description: Provider backend (kubevirt or pod)
             path: provider
     images:
-      - lab-platform:0.1.0
+      - zarf.internal/uds-lab-platform:0.1.0

@@ -6,15 +6,16 @@
 #
 # Examples:
 #   uds run dev
-#   uds run dev --with SKIP_IMAGES=1
-#   uds run dev --with SKIP_WIPE=1
-#   uds run dev --with SKIP_IMAGES=1 --with SKIP_WIPE=1
+#   uds run dev --with BUILD_IMAGES=1
+#   uds run dev --with WIPE_CLUSTER=0
+#   uds run dev --with BUILD_IMAGES=1 --with WIPE_CLUSTER=0
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 exec uds run dev \
-  --with SKIP_IMAGES="${SKIP_IMAGES:-0}" \
-  --with SKIP_WIPE="${SKIP_WIPE:-0}" \
+  --with BUILD_IMAGES="${BUILD_IMAGES:-0}" \
+  --with WIPE_CLUSTER="${WIPE_CLUSTER:-1}" \
   --with SKIP_BASE="${SKIP_BASE:-0}" \
-  --with SKIP_UDS_CORE="${SKIP_UDS_CORE:-0}"
+  --with SKIP_UDS_CORE="${SKIP_UDS_CORE:-0}" \
+  --with LOCAL_VM_IMAGES="${LOCAL_VM_IMAGES:-0}"

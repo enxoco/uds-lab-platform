@@ -12,9 +12,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	kvv1 "kubevirt.io/api/core/v1"
 	cdiv1 "kubevirt.io/containerized-data-importer-api/pkg/apis/core/v1beta1"
 
 	labv1 "github.com/enxoco/uds-lab-platform/api/v1alpha1"
+	"github.com/enxoco/uds-lab-platform/internal/sizing"
 )
 
 // scenariosFS points at the real scenario fixtures relative to this package.
@@ -97,6 +99,9 @@ func testScheme(t *testing.T) *runtime.Scheme {
 	if err := cdiv1.AddToScheme(s); err != nil {
 		t.Fatalf("add cdi scheme: %v", err)
 	}
+	if err := kvv1.AddToScheme(s); err != nil {
+		t.Fatalf("add kubevirt scheme: %v", err)
+	}
 	if err := labv1.AddToScheme(s); err != nil {
 		t.Fatalf("add labv1 scheme: %v", err)
 	}
@@ -148,6 +153,16 @@ func TestEnsureDataVolume_UsesPVCCloneSource(t *testing.T) {
 	if dv.Spec.Source.PVC.Name != "golden-base" {
 		t.Errorf("source PVC name = %q, want golden-base", dv.Spec.Source.PVC.Name)
 	}
+	if dv.Spec.PVC != nil {
+		t.Fatal("clone must use CDI storage API, not the direct PVC API")
+	}
+	if dv.Spec.Storage == nil {
+		t.Fatal("clone storage spec is nil; CDI cannot apply filesystem overhead")
+	}
+	storage := dv.Spec.Storage.Resources.Requests["storage"]
+	if storage.String() != "80Gi" {
+		t.Errorf("storage = %q, want 80Gi", storage.String())
+	}
 }
 
 func TestEnsureDataVolume_NamespaceFallsBackToVMNamespace(t *testing.T) {
@@ -198,8 +213,39 @@ func TestEnsureDataVolume_DiskSizeFallsBackToDefault(t *testing.T) {
 		t.Fatalf("get DataVolume: %v", err)
 	}
 
-	storage := dv.Spec.PVC.Resources.Requests["storage"]
+	if dv.Spec.PVC != nil {
+		t.Fatal("clone must use CDI storage API, not the direct PVC API")
+	}
+	if dv.Spec.Storage == nil {
+		t.Fatal("clone storage spec is nil")
+	}
+	storage := dv.Spec.Storage.Resources.Requests["storage"]
 	if storage.String() != defaultDiskSize {
 		t.Errorf("storage = %q, want %q", storage.String(), defaultDiskSize)
+	}
+}
+
+func TestEnsureVMI_OptsLauncherOutOfAmbientMesh(t *testing.T) {
+	s := testScheme(t)
+	fc := fake.NewClientBuilder().WithScheme(s).Build()
+	ls := testLabSession("test-vmi", "uds-lab-vms")
+	p := New(Config{Client: fc, Namespace: "uds-lab-vms"})
+
+	if err := p.ensureVMI(
+		context.Background(),
+		ls,
+		"lab-test-vmi",
+		map[string]string{sessionLabel: "test-vmi"},
+		sizing.Spec{CPU: "1", Memory: "1Gi"},
+	); err != nil {
+		t.Fatalf("ensureVMI: %v", err)
+	}
+
+	vmi := &kvv1.VirtualMachineInstance{}
+	if err := fc.Get(context.Background(), client.ObjectKey{Namespace: "uds-lab-vms", Name: "lab-test-vmi"}, vmi); err != nil {
+		t.Fatalf("get VMI: %v", err)
+	}
+	if got := vmi.Labels["istio.io/dataplane-mode"]; got != "none" {
+		t.Fatalf("VMI ambient opt-out label = %q, want none", got)
 	}
 }

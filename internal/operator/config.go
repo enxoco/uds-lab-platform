@@ -20,7 +20,7 @@ type Config struct {
 	Sizes              map[string]sizeEntry `yaml:"sizes"`
 	GoldenPVCs         map[string]string    `yaml:"goldenPVCs"`         // tier → PVC name
 	GoldenPVCNamespace string               `yaml:"goldenPVCNamespace"` // defaults to VM namespace
-	GoldenPVCDiskSize  string               `yaml:"goldenPVCDiskSize"`  // clone PVC size, e.g. "80Gi"
+	GoldenPVCDiskSize  string               `yaml:"goldenPVCDiskSize"`  // usable clone size requested through CDI storage API
 }
 
 type sizeEntry struct {

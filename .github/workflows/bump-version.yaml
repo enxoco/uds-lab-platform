@@ -73,14 +73,17 @@ jobs:
           OLD: ${{ steps.ver.outputs.current }}
           NEW: ${{ steps.ver.outputs.new }}
         run: |
-          # zarf.yaml — package version, chart version reference, image tag, IMAGE default
+          # zarf.yaml — package version, chart version reference, and image tag
           sed -i "s/^  version: ${OLD}$/  version: ${NEW}/" zarf.yaml
           sed -i "s/^        version: ${OLD}$/        version: ${NEW}/" zarf.yaml
-          sed -i "s/^    default: lab-platform:${OLD}$/    default: lab-platform:${NEW}/" zarf.yaml
-          sed -i "s/^      - lab-platform:${OLD}$/      - lab-platform:${NEW}/" zarf.yaml
+          sed -i "s#^      - zarf.internal/uds-lab-platform:${OLD}$#      - zarf.internal/uds-lab-platform:${NEW}#" zarf.yaml
 
           # chart/Chart.yaml
           sed -i "s/^version: ${OLD}$/version: ${NEW}/" chart/Chart.yaml
+          sed -i "s/^appVersion: \"${OLD}\"$/appVersion: \"${NEW}\"/" chart/Chart.yaml
+
+          # chart/values.yaml — exact image reference consumed by the Zarf agent
+          sed -i "s#^image: zarf.internal/uds-lab-platform:${OLD}$#image: zarf.internal/uds-lab-platform:${NEW}#" chart/values.yaml
 
           # bundle/uds-bundle.yaml — bundle version and the uds-lab-platform ref.
           # sed targets the quoted forms to avoid touching external package refs
@@ -108,7 +111,7 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add zarf.yaml chart/Chart.yaml bundle/uds-bundle.yaml packages/vm-images/zarf.yaml
+          git add zarf.yaml chart/Chart.yaml chart/values.yaml bundle/uds-bundle.yaml packages/vm-images/zarf.yaml
           git commit -m "chore: bump version to $NEW"
           git tag "v$NEW"
           git push origin HEAD:master

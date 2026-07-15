@@ -4,8 +4,12 @@ apiVersion: zarf.dev/v1alpha1
 kind: ZarfPackageConfig
 metadata:
   name: lab-vm-images
-  description: Lab playground VM images — packaged as OCI artifacts for CDI registry import
+  description: Lab playground VM images served to CDI from Zarf-managed Pods
   version: 0.1.0
+
+constants:
+  - name: VM_IMAGE_VERSION
+    value: "###ZARF_PKG_TMPL_VERSION###"
 
 # Build this package after running `uds run build-images` to produce qcow2 outputs.
 # The build-vm-images-package task in tasks.yaml handles the full workflow:
@@ -13,37 +17,67 @@ metadata:
 #   2. zarf package create packages/vm-images/
 
 components:
-  - name: vm-images
+  - name: vm-image-server
     required: true
-    description: Base and uds-core VM images as OCI artifacts + CDI DataVolumes
-    actions:
-      onDeploy:
-        before:
-          - description: Copy Zarf pull secret into uds-lab-vms for CDI importer
-            cmd: |
-              kubectl create namespace uds-lab-vms --dry-run=client -o yaml | kubectl apply -f -
-              # Zarf creates pull secrets per-namespace for pod-based workloads via its
-              # mutating webhook. CDI importer pods pull via DataVolume secretRef, bypassing
-              # that mechanism. Copy the secret from a namespace Zarf already created it in.
-              for ns in keycloak istio-system kubevirt zarf; do
-                if kubectl get secret private-registry -n "$ns" &>/dev/null 2>&1; then
-                  kubectl get secret private-registry -n "$ns" -o json \
-                    | jq 'del(.metadata.resourceVersion,.metadata.uid,.metadata.creationTimestamp,.metadata.ownerReferences,.metadata.annotations)
-                          | .metadata.namespace = "uds-lab-vms"' \
-                    | kubectl apply -f -
-                  echo "Copied private-registry from $ns to uds-lab-vms"
-                  break
-                fi
-              done
+    description: Base and uds-core VM images exposed by cluster-local HTTP servers
     imageArchives:
       - path: base.tar
         images:
-          - lab-vm-images/base:0.1.0
+          - zarf.internal/lab-vm-images/base:###ZARF_PKG_TMPL_VERSION###
       - path: uds-core.tar
         images:
-          - lab-vm-images/uds-core:0.1.0
+          - zarf.internal/lab-vm-images/uds-core:###ZARF_PKG_TMPL_VERSION###
+    manifests:
+      - name: vm-image-server
+        namespace: uds-lab-vms
+        files:
+          - manifests/image-server.yaml
+    actions:
+      onDeploy:
+        after:
+          - description: Wait for UDS intra-namespace network policy
+            maxTotalSeconds: 300
+            wait:
+              cluster:
+                kind: package
+                name: lab-vm-images
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Wait for both VM image server Pods
+            maxTotalSeconds: 1800
+            wait:
+              cluster:
+                kind: pod
+                name: app.kubernetes.io/part-of=lab-vm-images
+                namespace: uds-lab-vms
+                condition: ready
+
+  - name: golden-pvcs
+    required: true
+    description: Import golden VM disks from the cluster-local image servers
     manifests:
       - name: golden-pvcs
         namespace: uds-lab-vms
         files:
           - manifests/golden-pvcs.yaml
+    actions:
+      onDeploy:
+        after:
+          - description: Wait for the base golden image import
+            maxTotalSeconds: 3600
+            wait:
+              cluster:
+                kind: datavolume
+                name: golden-base
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Wait for the UDS Core golden image import
+            maxTotalSeconds: 3600
+            wait:
+              cluster:
+                kind: datavolume
+                name: golden-uds-core
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Scale bootstrap image servers to zero
+            cmd: ./zarf tools kubectl scale deployment/vm-image-base deployment/vm-image-uds-core --replicas=0 --namespace=uds-lab-vms

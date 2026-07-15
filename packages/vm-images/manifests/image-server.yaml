@@ -1,0 +1,208 @@
+apiVersion: uds.dev/v1alpha1
+kind: Package
+metadata:
+  name: lab-vm-images
+  namespace: uds-lab-vms
+spec:
+  network:
+    allow:
+      - direction: Egress
+        selector:
+          cdi.kubevirt.io: importer
+        remoteNamespace: uds-lab-vms
+        remoteSelector:
+          app.kubernetes.io/part-of: lab-vm-images
+        port: 8080
+        description: Golden image importer to VM image servers
+      - direction: Ingress
+        selector:
+          app.kubernetes.io/part-of: lab-vm-images
+        remoteNamespace: uds-lab-vms
+        remoteSelector:
+          cdi.kubevirt.io: importer
+        port: 8080
+        description: VM image servers from golden image importers
+      - direction: Egress
+        selector:
+          cdi.kubevirt.io: cdi-clone-source
+        remoteNamespace: uds-lab-vms
+        remoteSelector:
+          cdi.kubevirt.io: cdi-upload-server
+        port: 8443
+        description: CDI clone source to session upload server
+      - direction: Ingress
+        selector:
+          cdi.kubevirt.io: cdi-upload-server
+        remoteNamespace: uds-lab-vms
+        remoteSelector:
+          cdi.kubevirt.io: cdi-clone-source
+        port: 8443
+        description: Session upload server from CDI clone source
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-image-base
+  namespace: uds-lab-vms
+  labels:
+    app.kubernetes.io/name: vm-image-base
+    app.kubernetes.io/part-of: lab-vm-images
+spec:
+  selector:
+    app.kubernetes.io/name: vm-image-base
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vm-image-base
+  namespace: uds-lab-vms
+  labels:
+    app.kubernetes.io/name: vm-image-base
+    app.kubernetes.io/part-of: lab-vm-images
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vm-image-base
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vm-image-base
+        app.kubernetes.io/part-of: lab-vm-images
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: image-server
+          image: zarf.internal/lab-vm-images/base:###ZARF_CONST_VM_IMAGE_VERSION###
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vm-image-uds-core
+  namespace: uds-lab-vms
+  labels:
+    app.kubernetes.io/name: vm-image-uds-core
+    app.kubernetes.io/part-of: lab-vm-images
+spec:
+  selector:
+    app.kubernetes.io/name: vm-image-uds-core
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vm-image-uds-core
+  namespace: uds-lab-vms
+  labels:
+    app.kubernetes.io/name: vm-image-uds-core
+    app.kubernetes.io/part-of: lab-vm-images
+spec:
+  replicas: 1
+  revisionHistoryLimit: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vm-image-uds-core
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vm-image-uds-core
+        app.kubernetes.io/part-of: lab-vm-images
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: image-server
+          image: zarf.internal/lab-vm-images/uds-core:###ZARF_CONST_VM_IMAGE_VERSION###
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          startupProbe:
+            httpGet:
+              path: /
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 30
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              cpu: 500m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault

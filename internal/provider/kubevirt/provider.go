@@ -40,6 +40,11 @@ const (
 	// sessionLabel is set on the VMI (and inherited by the virt-launcher pod) so
 	// the Service and NetworkPolicy can select it.
 	sessionLabel = "lab.uds.dev/session"
+	// KubeVirt bridge-mode launcher pods must stay out of Istio ambient capture;
+	// ztunnel cannot forward intercepted service traffic through the pod bridge
+	// to the guest VM. Pod-level intent overrides the ambient namespace label.
+	istioDataplaneModeLabel = "istio.io/dataplane-mode"
+	istioDataplaneModeNone  = "none"
 
 	// In-VM ports (unchanged from the Hetzner VM software).
 	portInject = 7680 // lab-inject.py (cmd/verify/navigate/services)
@@ -73,7 +78,7 @@ type Config struct {
 	// CDI clones one golden PVC per session instead of importing from a registry.
 	GoldenPVCs         map[string]string
 	GoldenPVCNamespace string // namespace where golden PVCs live; defaults to Namespace
-	GoldenPVCDiskSize  string // size of the cloned PVC (must be >= golden PVC size)
+	GoldenPVCDiskSize  string // usable disk size requested through CDI's storage API
 
 	// StorageClass for the cloned DataVolume PVC. Empty uses the cluster default.
 	StorageClass string
@@ -326,12 +331,16 @@ func (p *Provider) ensureDataVolume(ctx context.Context, ls *labv1.LabSession, n
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, p.cfg.Client, dv, func() error {
 		dv.Labels = labels
-		// DataVolume spec (source + PVC shape) is immutable once CDI begins
+		// DataVolume spec (source + storage shape) is immutable once CDI begins
 		// importing. Only set it on create to avoid validation errors on update.
 		if dv.CreationTimestamp.IsZero() {
 			dv.Spec = cdiv1.DataVolumeSpec{
 				Source: source,
-				PVC: &corev1.PersistentVolumeClaimSpec{
+				// Use CDI's storage API so its webhook applies the configured
+				// filesystem overhead. The golden imports use the same API; using
+				// the direct PVC API here would make an 80Gi clone smaller than
+				// the overhead-inflated 80Gi source PVC.
+				Storage: &cdiv1.StorageSpec{
 					AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 					Resources: corev1.VolumeResourceRequirements{
 						Requests: corev1.ResourceList{corev1.ResourceStorage: diskQ},
@@ -364,13 +373,19 @@ func (p *Provider) ensureVMI(ctx context.Context, ls *labv1.LabSession, name str
 		return fmt.Errorf("parse memory %q: %w", spec.Memory, err)
 	}
 
+	vmiLabels := make(map[string]string, len(labels)+1)
+	for key, value := range labels {
+		vmiLabels[key] = value
+	}
+	vmiLabels[istioDataplaneModeLabel] = istioDataplaneModeNone
+
 	vmi := &kvv1.VirtualMachineInstance{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.cfg.Namespace, Labels: labels},
+		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.cfg.Namespace, Labels: vmiLabels},
 	}
 	_, err = controllerutil.CreateOrUpdate(ctx, p.cfg.Client, vmi, func() error {
 		// VMI spec is effectively immutable once Running; only set on create.
 		if vmi.CreationTimestamp.IsZero() {
-			vmi.Labels = labels
+			vmi.Labels = vmiLabels
 			vmi.Spec = kvv1.VirtualMachineInstanceSpec{
 				Domain: kvv1.DomainSpec{
 					Resources: kvv1.ResourceRequirements{
