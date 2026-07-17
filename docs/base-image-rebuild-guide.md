@@ -27,7 +27,7 @@ These changes are baked into the VM snapshot and will not affect existing images
 | `/opt/lab-entry.sh` (tmux session entry script) | Base → all downstream |
 | ttyd binary or version | Base → all downstream |
 | Chromium version or config | Base → all downstream |
-| Docker, k3d, UDS CLI versions | Tools playground → UDS Core playground |
+| Docker, k3d, UDS CLI versions | Base → UDS Core playground |
 | UDS Core bundle or version | UDS Core playground only |
 | k3d cluster config | UDS Core playground only |
 
@@ -36,26 +36,25 @@ These changes are baked into the VM snapshot and will not affect existing images
 ## How to rebuild
 
 ```bash
-export HCLOUD_TOKEN=<your-token>
 cd packer/
 
-# Rebuild everything (base → tools → uds-core)
-./build-images.sh
+# Rebuild both images (base → uds-core)
+./build-images-qemu.sh
 
 # Skip unchanged layers
-SKIP_BASE=1 BASE_IMAGE=<existing-snapshot-name> ./build-images.sh
-SKIP_BASE=1 SKIP_TOOLS=1 BASE_IMAGE=<name> TOOLS_IMAGE=<name> ./build-images.sh
+SKIP_BASE=1 BASE_IMAGE=output/base/lab-base.qcow2 ./build-images-qemu.sh
 ```
 
-Snapshots are auto-discovered by the server at session creation via Hetzner label selectors — no config changes needed after a rebuild.
+The QEMU build produces local qcow2 files. Re-import the rebuilt files with
+`scripts/create-golden-pvc.sh`; no server configuration changes are needed.
 
 ## Image dependency chain
 
 ```
-lab-base  ──→  lab-playground-tools  ──→  lab-playground-uds-core
+lab-base  ──→  lab-playground-uds-core
 ```
 
-Rebuilding a layer requires rebuilding all downstream layers too. Base rebuilds cascade to both playground tiers (~15 minutes total for a full rebuild).
+Rebuilding a layer requires rebuilding all downstream layers too. Base rebuilds cascade to the UDS Core playground.
 
 ## Current known rebuild-required changes
 

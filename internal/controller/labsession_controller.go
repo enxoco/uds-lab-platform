@@ -75,7 +75,11 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.Update(ctx, ls); err != nil {
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
+		// The update's watch event will enqueue the next reconciliation after
+		// the informer cache observes the new resourceVersion. An immediate
+		// requeue can read the stale cached object and repeat this update with
+		// the old resourceVersion.
+		return ctrl.Result{}, nil
 	}
 
 	// TTL: once expired, tear down everything (including any snapshot) but retain
@@ -88,9 +92,10 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			if err := r.Provider.Teardown(ctx, ls); err != nil {
 				return ctrl.Result{}, err
 			}
-			ls.Status.Phase = labv1.PhaseExpired
-			ls.Status.SnapshotName = ""
-			if err := r.Status().Update(ctx, ls); err != nil {
+			if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+				status.Phase = labv1.PhaseExpired
+				status.SnapshotName = ""
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -109,9 +114,10 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			if err != nil {
 				return ctrl.Result{}, err
 			}
-			ls.Status.SnapshotName = snapName
-			ls.Status.ServiceDNS = ""
-			if err := r.Status().Update(ctx, ls); err != nil {
+			if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+				status.SnapshotName = snapName
+				status.ServiceDNS = ""
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: 5 * time.Second}, nil
@@ -124,8 +130,9 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		if err := r.Provider.TeardownDisk(ctx, ls); err != nil {
 			return ctrl.Result{}, err
 		}
-		ls.Status.Phase = labv1.PhasePaused
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+			status.Phase = labv1.PhasePaused
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
@@ -133,8 +140,9 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 
 	// Resume: clear paused flag and let Reconcile recreate the VM from snapshot.
 	if !ls.Spec.Paused && ls.Status.Phase == labv1.PhasePaused {
-		ls.Status.Phase = labv1.PhaseProvisioning
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+			status.Phase = labv1.PhaseProvisioning
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 		return ctrl.Result{RequeueAfter: time.Second}, nil
@@ -166,10 +174,11 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 
 	if ls.Status.Phase != phase || ls.Status.ServiceDNS != res.ServiceDNS || ls.Status.Message != res.Message {
-		ls.Status.Phase = phase
-		ls.Status.ServiceDNS = res.ServiceDNS
-		ls.Status.Message = res.Message
-		if err := r.Status().Update(ctx, ls); err != nil {
+		if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+			status.Phase = phase
+			status.ServiceDNS = res.ServiceDNS
+			status.Message = res.Message
+		}); err != nil {
 			return ctrl.Result{}, err
 		}
 	}
@@ -180,8 +189,9 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			log.FromContext(ctx).Error(err, "delete post-resume snapshot", "snapshot", snapToDelete)
 			snapshotCleanupPending = true
 		} else {
-			ls.Status.SnapshotName = ""
-			if err := r.Status().Update(ctx, ls); err != nil {
+			if err := r.patchStatus(ctx, ls, func(status *labv1.LabSessionStatus) {
+				status.SnapshotName = ""
+			}); err != nil {
 				return ctrl.Result{}, err
 			}
 		}
@@ -195,6 +205,16 @@ func (r *LabSessionReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		return ctrl.Result{RequeueAfter: requeueWhilePending}, nil
 	}
 	return ctrl.Result{RequeueAfter: requeueUntilExpiry(ls)}, nil
+}
+
+// patchStatus changes only the lifecycle fields owned by the operator. The
+// platform server independently patches status.completedSteps; a merge patch
+// preserves those concurrent writes instead of replacing the full status from
+// a stale resourceVersion.
+func (r *LabSessionReconciler) patchStatus(ctx context.Context, ls *labv1.LabSession, mutate func(*labv1.LabSessionStatus)) error {
+	before := ls.DeepCopy()
+	mutate(&ls.Status)
+	return r.Status().Patch(ctx, ls, client.MergeFrom(before))
 }
 
 func (r *LabSessionReconciler) probe(ctx context.Context, serviceDNS string) bool {

@@ -17,6 +17,11 @@ func helmTemplate(t *testing.T, extraArgs ...string) string {
 	return string(out)
 }
 
+func helmTemplateCommand(extraArgs ...string) *exec.Cmd {
+	args := append([]string{"template", "lab-platform", "./chart"}, extraArgs...)
+	return exec.Command("helm", args...)
+}
+
 func extractStderr(err error) []byte {
 	var ee *exec.ExitError
 	if exitErr, ok := err.(*exec.ExitError); ok {
@@ -86,5 +91,41 @@ func TestHelmChart_OperatorRBACCoversLabSessionStatus(t *testing.T) {
 	out := helmTemplate(t)
 	if !strings.Contains(out, "labsessions/status") {
 		t.Error("operator Role missing labsessions/status permission")
+	}
+}
+
+func TestHelmChart_UsesPackagedImageByDefault(t *testing.T) {
+	out := helmTemplate(t)
+	var values chartValues
+	readYAML(t, "chart/values.yaml", &values)
+
+	if got := strings.Count(out, "image: "+values.Image); got != 2 {
+		t.Fatalf("expected packaged image in both Deployments, got %d occurrences", got)
+	}
+	if strings.Contains(out, ":latest") {
+		t.Fatal("rendered chart must not use a mutable latest tag")
+	}
+	if got := strings.Count(out, "imagePullPolicy: Always"); got != 2 {
+		t.Fatalf("expected Always in both Deployments so same-version Zarf redeploys pull rebuilt images, got %d occurrences", got)
+	}
+}
+
+func TestHelmChart_PodProviderOmitsKubeVirtResources(t *testing.T) {
+	out := helmTemplate(t, "--set", "provider=pod")
+	for _, resource := range []string{"datavolumes", "virtualmachineinstances", "volumesnapshots"} {
+		if strings.Contains(out, resource) {
+			t.Errorf("pod provider unexpectedly rendered %s RBAC", resource)
+		}
+	}
+}
+
+func TestHelmChart_RejectsUnsupportedProvider(t *testing.T) {
+	cmd := helmTemplateCommand("--set", "provider=invalid")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected invalid provider to fail Helm validation\n%s", out)
+	}
+	if !strings.Contains(string(out), "provider") {
+		t.Fatalf("expected provider validation error, got:\n%s", out)
 	}
 }

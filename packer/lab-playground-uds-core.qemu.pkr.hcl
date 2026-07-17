@@ -7,14 +7,14 @@ packer {
   }
 }
 
-variable "tools_image" {
+variable "base_image" {
   type        = string
-  description = "Path to lab-playground-tools.qcow2"
-  default     = "output/tools/lab-playground-tools.qcow2"
+  description = "Path to lab-base.qcow2 produced by lab-base.qemu.pkr.hcl"
+  default     = "output/base/lab-base.qcow2"
 }
 
 source "qemu" "lab-playground-uds-core" {
-  iso_url      = var.tools_image
+  iso_url      = var.base_image
   iso_checksum = "none"
   disk_image   = true
 
@@ -22,6 +22,10 @@ source "qemu" "lab-playground-uds-core" {
   output_directory = "output/uds-core"
   vm_name          = "lab-playground-uds-core.qcow2"
 
+  # UDS Core container images (Istio, Keycloak, MetalLB, Pepr) consume ~11G at
+  # rest, but peak working space during the build (Docker pulls + running pods +
+  # overlay2 upper dirs) is much higher. Keep at 80G so Keycloak has room to
+  # initialise during the packer provisioner without hitting the health-check timeout.
   disk_size = "80G"
   cpus      = 4
   memory    = 8192

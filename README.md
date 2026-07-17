@@ -26,13 +26,17 @@ Lab VM (boots from golden PVC)
 
 ### Golden PVCs
 
-VM images are built once with Packer (QEMU/KVM) and imported into the cluster as CDI DataVolumes. Each LabSession clones the appropriate golden PVC, giving every user an isolated copy of the full disk image. Clone time is seconds regardless of image size.
+VM images are built once with Packer (QEMU/KVM), wrapped in small Python HTTP
+server images, and bundled by Zarf. Zarf rewrites the server Pods' normal image
+references and supplies registry credentials at deploy time. CDI imports the
+qcow2 files from stable cluster-local Services; no Zarf registry address appears
+in a DataVolume. Each LabSession then clones the appropriate golden PVC, giving
+every user an isolated copy of the full disk image.
 
 | Tier | Golden PVC | Contents |
 |------|-----------|----------|
-| `base` | `golden-base` | Ubuntu 24.04 + tmux, ttyd, noVNC, Chromium, dnsmasq |
-| `tools` | `golden-tools` | Base + Docker, k3d, uds CLI, neovim, jq, yq |
-| `uds-core` | `golden-uds-core` | Tools + k3d-core-slim-dev fully deployed |
+| `base` | `golden-base` | Ubuntu 24.04 + Docker, k3d, uds CLI, neovim, jq, yq, tmux, ttyd, noVNC, Chromium |
+| `uds-core` | `golden-uds-core` | Base + k3d-core-slim-dev fully deployed |
 
 ## Prerequisites
 
@@ -51,29 +55,39 @@ VM images are built once with Packer (QEMU/KVM) and imported into the cluster as
 ### Full e2e from scratch
 
 ```bash
-./scripts/dev.sh
+uds run dev
 ```
 
 This will:
 1. Generate a packer SSH keypair (if missing)
-2. Build all three VM qcow2 images with Packer (~60 min)
-3. Wipe and reinstall k3s (MetalLB + KubeVirt + CDI + UDS Core)
-4. Build and deploy the lab-platform Docker image
-5. Import golden PVCs from the built qcow2s
-6. Patch CoreDNS to route `*.uds.dev` to MetalLB gateways
-7. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
-8. Start the nginx SNI proxy for external access
+2. Wipe and reinstall k3s (MetalLB + KubeVirt + CDI + UDS Core)
+3. Build and deploy the lab-platform Docker image
+4. Deploy the versioned VM-image package from the UDS Army registry
+5. Patch CoreDNS to route `*.uds.dev` to MetalLB gateways
+6. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
+7. Start the nginx SNI proxy for external access
 
-### Skip packer (images already built)
+### Build local VM images instead of using the published package
 
 ```bash
-./scripts/dev.sh SKIP_IMAGES=1
+uds run dev --with BUILD_IMAGES=1 --with LOCAL_VM_IMAGES=1
 ```
+
+This is only needed when producing a new VM-image package for manual
+publication. The normal dev flow uses the package already published at
+`registry.uds-mil.us/enxo/lab-vm-images`.
 
 ### Keep existing k3s, redeploy platform only
 
 ```bash
-./scripts/dev.sh SKIP_IMAGES=1 SKIP_WIPE=1
+uds run dev --with WIPE_CLUSTER=0
+```
+
+To bypass the registry and use local VM-image archives while keeping the
+cluster, run:
+
+```bash
+uds run dev --with WIPE_CLUSTER=0 --with BUILD_IMAGES=0 --with LOCAL_VM_IMAGES=1
 ```
 
 ### Rebuild and redeploy operator only (fastest iteration)
@@ -95,23 +109,25 @@ After the script completes:
 Images are built locally with QEMU/KVM and output as qcow2 files in `packer/output/`.
 
 ```bash
-# Build all three images
+# Build both images
 uds run build-images
 
 # Skip specific tiers (reuse existing qcow2s)
 uds run build-images --with skip_base=1
-uds run build-images --with skip_base=1 --with skip_tools=1
 ```
 
-Build order: `lab-base` → `playground-tools` → `playground-uds-core`. Each stage
-uses the previous stage's qcow2 as its base disk. The UDS Core image takes ~45 min
+Build order: `lab-base` → `playground-uds-core`. The base image includes the
+tools previously provided by a separate image. Each stage uses the previous
+stage's qcow2 as its base disk. The UDS Core image takes ~45 min
 (deploys a full k3d UDS Core cluster inside the VM before snapshotting).
 
-### Import golden PVCs (after building images)
+### Import golden PVCs directly from qcow2 files (fallback)
+
+The normal bundle deployment imports from the packaged image-server Services.
+Use this host-served path only as a troubleshooting fallback:
 
 ```bash
 BASE_QCOW2=packer/output/base/lab-base.qcow2 \
-TOOLS_QCOW2=packer/output/tools/lab-playground-tools.qcow2 \
 UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
 ./scripts/create-golden-pvc.sh
 ```
@@ -119,6 +135,7 @@ UDS_CORE_QCOW2=packer/output/uds-core/lab-playground-uds-core.qcow2 \
 ## Available Tasks
 
 ```bash
+uds run dry-run         # tests + Helm lint/render + Zarf lint/render; no cluster
 uds run dev             # full e2e (calls dev.sh)
 uds run build-images    # packer builds only
 uds run cluster-up      # cluster setup only
@@ -268,6 +285,28 @@ scripts/        # dev workflow scripts
 vm/             # user-data.sh.gotmpl — cloud-init for lab VMs
 scenarios/      # lab scenario definitions
 ```
+
+### Release process
+
+Release package creation and publishing are currently manual. The release steps
+remain disabled in GitHub Actions until the required runner and release
+environment are configured.
+
+The VM-image package must be built and published to
+`registry.uds-mil.us/enxo/lab-vm-images` before a clean development cluster can
+run the default flow. Build it locally with `uds run build-images` followed by
+`uds run build-vm-images-package`, then publish it manually with the
+`udm-common` publishing tasks.
+
+```bash
+# GitHub UI: Actions -> Bump Version -> Run workflow -> select minor/major/patch
+# Or via CLI:
+gh workflow run bump-version.yaml -f bump_type=minor
+```
+
+The UDS bundle (`bundle/uds-bundle.yaml`) depends on `ghcr.io/uds-packages/kubevirt`, a Defense Unicorns internal package. **The bundle must never be built or published from public CI** - it can only be assembled on internal DU infrastructure with access to that registry. The bundle is for local dev use only; `uds run build-bundle` and `uds run deploy-bundle` are not run by any CI workflow.
+
+The KubeVirt package is referenced in the bundle exclusively via its OCI registry URL. No KubeVirt tarballs are ever committed to this repo or produced by CI.
 
 ### Iterating on the operator
 

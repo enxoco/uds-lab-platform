@@ -166,7 +166,7 @@ spec:
       containers:
         - name: lab-platform
           image: {{ .Values.image }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           ports:
             - containerPort: 8080
           env:
@@ -229,7 +229,7 @@ spec:
       containers:
         - name: lab-operator
           image: {{ .Values.image }}
-          imagePullPolicy: Always
+          imagePullPolicy: {{ .Values.imagePullPolicy }}
           command: ["/lab-operator"]
           env:
             - name: OPERATOR_CONFIG

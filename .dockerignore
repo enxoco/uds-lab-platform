@@ -4,9 +4,13 @@ packer/packer-key.pub
 packer/manifest*.json
 node_modules/
 packages/
+bundle/
 *.tar
 *.tar.zst
 *.qcow2
+**/*.tar
+**/*.tar.zst
+**/*.qcow2
 .tmp-*
 web/static/ide-assets/
 .codegraph/

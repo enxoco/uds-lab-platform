@@ -1,5 +1,8 @@
 domain: uds.dev
-image: ghcr.io/enxoco/uds-lab-platform:latest
+image: zarf.internal/uds-lab-platform:0.1.0
+# Zarf's transformed tag is stable for a given source reference. Always check
+# the package registry so same-version local redeploys run the rebuilt image.
+imagePullPolicy: Always
 vmNamespace: uds-lab-vms
 sessionTTLMinutes: 60
 
@@ -13,7 +16,8 @@ provider: kubevirt
 # These names match what create-golden-pvc.sh produces.
 goldenPVCs:
   base: golden-base
-  tools: golden-tools
+  tools: golden-base   # alias — tools tier uses the same base image
   uds-core: golden-uds-core
 goldenPVCNamespace: ""   # defaults to vmNamespace
+# Usable session-disk size. CDI adds filesystem overhead to the allocated PVC.
 goldenPVCDiskSize: "80Gi"

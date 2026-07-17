@@ -1,0 +1,6 @@
+FROM python:3.13.14-alpine3.23
+COPY lab-playground-uds-core.qcow2 /disk/
+
+USER 65532:65532
+EXPOSE 8080
+CMD ["python3", "-m", "http.server", "8080", "--bind", "0.0.0.0", "--directory", "/disk"]
