@@ -8,7 +8,7 @@ kind: UDSBundle
 metadata:
   name: uds-lab-platform
   description: UDS Lab Platform — interactive ISV packaging labs
-  version: "0.1.0"
+  version: "0.3.0"
 
 packages:
   - name: core-base
@@ -82,10 +82,4 @@ packages:
 
   - name: uds-lab-platform
     path: ../
-    ref: "0.1.0"
-
-  # VM images are packaged separately so they can be versioned and rebuilt
-  # independently of the platform code. Build with: uds run build-vm-images-package
-  - name: lab-vm-images
-    repository: registry.uds-mil.us/enxo/lab-vm-images
-    ref: "0.1.0"
+    ref: "0.3.0"

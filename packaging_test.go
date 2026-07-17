@@ -11,7 +11,8 @@ import (
 
 type zarfPackage struct {
 	Components []struct {
-		Name          string `yaml:"name"`
+		Name   string   `yaml:"name"`
+		Images []string `yaml:"images"`
 		ImageArchives []struct {
 			Images []string `yaml:"images"`
 		} `yaml:"imageArchives"`
@@ -78,45 +79,75 @@ type chartMetadata struct {
 	AppVersion string `yaml:"appVersion"`
 }
 
-func TestVMImagePackageUsesPodImageServerForCDIHTTPImports(t *testing.T) {
-	contents, err := os.ReadFile("packages/vm-images/zarf.yaml")
+func TestVMImageComponentsInMainPackage(t *testing.T) {
+	contents, err := os.ReadFile("zarf.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var pkg zarfPackage
 	if err := yaml.Unmarshal(contents, &pkg); err != nil {
-		t.Fatalf("parse VM image package: %v", err)
+		t.Fatalf("parse package: %v", err)
 	}
 
-	if len(pkg.Components) != 2 {
-		t.Fatalf("VM image package must deploy the image server before the DataVolumes, got %d components", len(pkg.Components))
+	var server, imports *struct {
+		Name   string   `yaml:"name"`
+		Images []string `yaml:"images"`
+		ImageArchives []struct {
+			Images []string `yaml:"images"`
+		} `yaml:"imageArchives"`
+		Manifests []struct {
+			Files []string `yaml:"files"`
+		} `yaml:"manifests"`
+		Actions struct {
+			OnDeploy struct {
+				After []struct {
+					Cmd  string `yaml:"cmd"`
+					Wait struct {
+						Cluster struct {
+							Kind      string `yaml:"kind"`
+							Name      string `yaml:"name"`
+							Namespace string `yaml:"namespace"`
+							Condition string `yaml:"condition"`
+						} `yaml:"cluster"`
+					} `yaml:"wait"`
+				} `yaml:"after"`
+			} `yaml:"onDeploy"`
+		} `yaml:"actions"`
 	}
-	server := pkg.Components[0]
-	imports := pkg.Components[1]
-	if server.Name != "vm-image-server" || imports.Name != "golden-pvcs" {
-		t.Fatalf("component order must be vm-image-server then golden-pvcs, got %q then %q", server.Name, imports.Name)
+	serverIdx := -1
+	for i := range pkg.Components {
+		switch pkg.Components[i].Name {
+		case "vm-image-server":
+			server = &pkg.Components[i]
+			serverIdx = i
+		case "golden-pvcs":
+			imports = &pkg.Components[i]
+		}
 	}
-
-	var archiveImages []string
-	for _, archive := range server.ImageArchives {
-		archiveImages = append(archiveImages, archive.Images...)
+	if server == nil || imports == nil {
+		t.Fatal("root zarf.yaml must contain both vm-image-server and golden-pvcs components")
 	}
-	wantImages := []string{
-		"zarf.internal/lab-vm-images/base:###ZARF_PKG_TMPL_VERSION###",
-		"zarf.internal/lab-vm-images/uds-core:###ZARF_PKG_TMPL_VERSION###",
-	}
-	for _, image := range wantImages {
-		if !contains(archiveImages, image) {
-			t.Fatalf("image server archive list does not contain %q", image)
+	for i := range pkg.Components {
+		if pkg.Components[i].Name == "golden-pvcs" && i <= serverIdx {
+			t.Fatal("vm-image-server must come before golden-pvcs in component order")
 		}
 	}
 
-	if len(server.Manifests) != 1 || !contains(server.Manifests[0].Files, "manifests/image-server.yaml") {
-		t.Fatal("vm-image-server component must deploy manifests/image-server.yaml")
+	for _, image := range server.Images {
+		if !strings.HasPrefix(image, "ghcr.io/enxoco/lab-vm-images/") {
+			t.Fatalf("vm-image-server image must use ghcr.io/enxoco registry, got %q", image)
+		}
 	}
-	if len(imports.Manifests) != 1 || !contains(imports.Manifests[0].Files, "manifests/golden-pvcs.yaml") {
-		t.Fatal("golden-pvcs component must deploy manifests/golden-pvcs.yaml")
+	if len(server.Images) != 2 {
+		t.Fatalf("vm-image-server must have 2 images (base + uds-core), got %d", len(server.Images))
+	}
+
+	if len(server.Manifests) != 1 || !contains(server.Manifests[0].Files, "packages/vm-images/manifests/image-server.yaml") {
+		t.Fatal("vm-image-server component must deploy packages/vm-images/manifests/image-server.yaml")
+	}
+	if len(imports.Manifests) != 1 || !contains(imports.Manifests[0].Files, "packages/vm-images/manifests/golden-pvcs.yaml") {
+		t.Fatal("golden-pvcs component must deploy packages/vm-images/manifests/golden-pvcs.yaml")
 	}
 	if len(imports.Actions.OnDeploy.After) != 3 {
 		t.Fatal("golden-pvcs component must wait for both imports before scaling down its servers")
@@ -186,8 +217,8 @@ func TestVMImagePackageUsesPodImageServerForCDIHTTPImports(t *testing.T) {
 		t.Fatalf("image-server UDS network policy is not least-privilege:\n got: %#v\nwant: %#v", udsPackage.Spec.Network.Allow, wantAllows)
 	}
 	for _, image := range []string{
-		"zarf.internal/lab-vm-images/base:###ZARF_CONST_VM_IMAGE_VERSION###",
-		"zarf.internal/lab-vm-images/uds-core:###ZARF_CONST_VM_IMAGE_VERSION###",
+		"ghcr.io/enxoco/lab-vm-images/base:###ZARF_CONST_VM_IMAGE_TAG###",
+		"ghcr.io/enxoco/lab-vm-images/uds-core:###ZARF_CONST_VM_IMAGE_TAG###",
 	} {
 		if !strings.Contains(serverText, image) {
 			t.Fatalf("image server manifest does not reference packaged image %q", image)
@@ -280,8 +311,8 @@ func TestApplicationImageAndVersionsStayConsistent(t *testing.T) {
 		if component.Images[0] != values.Image {
 			t.Fatalf("Zarf image %q differs from chart image %q", component.Images[0], values.Image)
 		}
-		if !strings.HasPrefix(values.Image, "zarf.internal/") {
-			t.Fatalf("locally packaged image must use the zarf.internal domain, got %q", values.Image)
+		if !strings.HasPrefix(values.Image, "ghcr.io/enxoco/") {
+			t.Fatalf("application image must use ghcr.io/enxoco registry, got %q", values.Image)
 		}
 		if strings.HasSuffix(values.Image, ":latest") {
 			t.Fatal("application image must use an immutable version tag")

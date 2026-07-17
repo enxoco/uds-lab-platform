@@ -81,7 +81,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: image-server
-          image: zarf.internal/lab-vm-images/base:###ZARF_CONST_VM_IMAGE_VERSION###
+          image: ghcr.io/enxoco/lab-vm-images/base:###ZARF_CONST_VM_IMAGE_TAG###
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -165,7 +165,7 @@ spec:
       automountServiceAccountToken: false
       containers:
         - name: image-server
-          image: zarf.internal/lab-vm-images/uds-core:###ZARF_CONST_VM_IMAGE_VERSION###
+          image: ghcr.io/enxoco/lab-vm-images/uds-core:###ZARF_CONST_VM_IMAGE_TAG###
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

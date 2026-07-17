@@ -1,5 +1,5 @@
 domain: uds.dev
-image: zarf.internal/uds-lab-platform:0.1.0
+image: ghcr.io/enxoco/uds-lab-platform:0.3.0
 # Zarf's transformed tag is stable for a given source reference. Always check
 # the package registry so same-version local redeploys run the rebuilt image.
 imagePullPolicy: Always

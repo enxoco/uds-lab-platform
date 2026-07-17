@@ -55,22 +55,22 @@ jobs:
       # build the VM images or run the full e2e stack. Re-enable once a self-hosted
       # runner is configured with the appropriate labels. Run manually in the meantime:
       #   uds run build-image
-      #   uds run build:zarf-package --with build_command='uds run build-image && uds zarf package create . --confirm --no-progress --architecture=amd64 --output "$PWD"'
+      #   uds run build:zarf-package --with build_command='uds run build-image && uds run build-lab-package'
       #   uds run vouch:package ...
       #   uds run publish:zarf-package ...
 
-      # Build the image into the local Docker daemon so zarf package create can
-      # embed it. No registry push — the image lives only inside the zarf package.
+      # Build the lab-platform Docker image into the local daemon so zarf package
+      # create can embed it. VM images are pulled from ghcr.io at create time.
       - name: Build image
         if: false
         run: uds run build-image
 
-      # Builds zarf.yaml only. The chart and package use the same package-owned
-      # image reference so Zarf can find it locally and embed it.
+      # Builds the single zarf package (lab-server + vm-image-server + golden-pvcs).
+      # VM images must already exist in ghcr.io or local Docker daemon.
       # The UDS bundle (bundle/) must be built on internal DU infrastructure.
       - name: Build zarf package
         if: false
-        run: uds run build:zarf-package --with build_command='uds run build-image && uds zarf package create . --confirm --no-progress --architecture=amd64 --output "$PWD"'
+        run: uds run build:zarf-package --with build_command='uds run build-image && uds run build-lab-package'
 
       - name: Vouch
         if: false
