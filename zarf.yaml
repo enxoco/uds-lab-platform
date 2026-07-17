@@ -5,7 +5,11 @@ kind: ZarfPackageConfig
 metadata:
   name: uds-lab-platform
   description: Lab server and operator — CRD, Deployments, RBAC.  KubeVirt/CDI/UDS Core are in the bundle.
-  version: 0.1.0
+  version: 0.3.0
+
+constants:
+  - name: VM_IMAGE_TAG
+    value: "###ZARF_PKG_TMPL_VM_IMAGE_TAG###"
 
 variables:
   - name: DOMAIN
@@ -31,7 +35,7 @@ components:
     charts:
       - name: lab-platform
         localPath: chart
-        version: 0.1.0
+        version: 0.3.0
         namespace: lab-platform
         variables:
           - name: DOMAIN
@@ -41,4 +45,65 @@ components:
             description: Provider backend (kubevirt or pod)
             path: provider
     images:
-      - zarf.internal/uds-lab-platform:0.1.0
+      - ghcr.io/enxoco/uds-lab-platform:0.3.0
+
+  - name: vm-image-server
+    required: true
+    description: Base and uds-core VM images exposed by cluster-local HTTP servers
+    manifests:
+      - name: vm-image-server
+        namespace: uds-lab-vms
+        files:
+          - packages/vm-images/manifests/image-server.yaml
+    images:
+      - ghcr.io/enxoco/lab-vm-images/base:###ZARF_PKG_TMPL_VM_IMAGE_TAG###
+      - ghcr.io/enxoco/lab-vm-images/uds-core:###ZARF_PKG_TMPL_VM_IMAGE_TAG###
+    actions:
+      onDeploy:
+        after:
+          - description: Wait for UDS intra-namespace network policy
+            maxTotalSeconds: 300
+            wait:
+              cluster:
+                kind: package
+                name: lab-vm-images
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Wait for both VM image server Pods
+            maxTotalSeconds: 1800
+            wait:
+              cluster:
+                kind: pod
+                name: app.kubernetes.io/part-of=lab-vm-images
+                namespace: uds-lab-vms
+                condition: ready
+
+  - name: golden-pvcs
+    required: true
+    description: Import golden VM disks from the cluster-local image servers
+    manifests:
+      - name: golden-pvcs
+        namespace: uds-lab-vms
+        files:
+          - packages/vm-images/manifests/golden-pvcs.yaml
+    actions:
+      onDeploy:
+        after:
+          - description: Wait for the base golden image import
+            maxTotalSeconds: 3600
+            wait:
+              cluster:
+                kind: datavolume
+                name: golden-base
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Wait for the UDS Core golden image import
+            maxTotalSeconds: 3600
+            wait:
+              cluster:
+                kind: datavolume
+                name: golden-uds-core
+                namespace: uds-lab-vms
+                condition: ready
+          - description: Scale bootstrap image servers to zero
+            cmd: ./zarf tools kubectl scale deployment/vm-image-base deployment/vm-image-uds-core --replicas=0 --namespace=uds-lab-vms

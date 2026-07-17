@@ -1,11 +1,11 @@
 includes:
-  - attest: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/attest.yaml
-  - build: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/build.yaml
-  - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/olm.yaml
-  - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/publish.yaml
-  - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/scan.yaml
-  - setup: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/setup.yaml
-  - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.2/tasks/vouch.yaml
+  - attest: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/attest.yaml
+  - build: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/build.yaml
+  - olm: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/olm.yaml
+  - publish: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/publish.yaml
+  - scan: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/scan.yaml
+  - setup: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/setup.yaml
+  - vouch: https://raw.githubusercontent.com/defenseunicorns-udm/udm-common/v0.13.4/tasks/vouch.yaml
   - uds-setup: https://raw.githubusercontent.com/defenseunicorns/uds-common/v1.24.14/tasks/setup.yaml
 
 tasks:
@@ -17,15 +17,9 @@ tasks:
       skip:
         description: Set to 1 to skip artifact cleanup when WIPE_CLUSTER=0
         default: "0"
-      skip_vm_images:
-        description: Keep existing VM image archives when image builds are skipped
-        default: "0"
       clean:
         description: Clean artifacts (1 = clean)
         default: "1"
-      keep_vm_images:
-        description: Preserve VM image archives (1 = keep)
-        default: "0"
     actions:
       - description: Remove build artifacts
         cmd: |
@@ -37,12 +31,6 @@ tasks:
           rm -f zarf-package-*.tar.zst lab-server.tar uds-lab-platform-*.tar
           rm -f bundle/uds-bundle-*.tar.zst
           rm -f packages/cdi/zarf-package-*.tar.zst
-          rm -f packages/vm-images/zarf-package-*.tar.zst
-          if [ "${{ .inputs.skip_vm_images }}" = "1" ] || [ "${{ .inputs.keep_vm_images }}" = "1" ]; then
-            echo "Keeping existing VM image archives"
-          else
-            rm -f packages/vm-images/base.tar packages/vm-images/uds-core.tar
-          fi
           rm -rf ~/.cache/zarf-tmp
           echo "Done."
 
@@ -120,16 +108,12 @@ tasks:
       - description: Validate VM image server and CDI import lifecycle
         cmd: |
           set -euo pipefail
-          VM_ZARF=packages/vm-images/zarf.yaml
           VM_SERVER=packages/vm-images/manifests/image-server.yaml
           VM_MANIFEST=packages/vm-images/manifests/golden-pvcs.yaml
-          test -f "$VM_ZARF" || { echo "ERROR: missing $VM_ZARF" >&2; exit 1; }
           test -f "$VM_SERVER" || { echo "ERROR: missing $VM_SERVER" >&2; exit 1; }
           test -f "$VM_MANIFEST" || { echo "ERROR: missing $VM_MANIFEST" >&2; exit 1; }
-          test "$(yq -r '.components[0].name' "$VM_ZARF")" = "vm-image-server"
-          test "$(yq -r '.components[1].name' "$VM_ZARF")" = "golden-pvcs"
-          rg -q 'image: zarf.internal/lab-vm-images/base:' "$VM_SERVER"
-          rg -q 'image: zarf.internal/lab-vm-images/uds-core:' "$VM_SERVER"
+          rg -q 'image: ghcr.io/enxoco/lab-vm-images/base:' "$VM_SERVER"
+          rg -q 'image: ghcr.io/enxoco/lab-vm-images/uds-core:' "$VM_SERVER"
           rg -q 'source:' "$VM_MANIFEST"
           rg -q 'http:' "$VM_MANIFEST"
           if rg -q 'registry:|secretRef:|ZARF_REGISTRY|CDI_REGISTRY|zarf-docker-registry' "$VM_MANIFEST"; then
@@ -154,15 +138,13 @@ tasks:
       - description: Lint and render Zarf package definitions
         cmd: |
           set -euo pipefail
-          VERSION=$(yq -r '.metadata.version' packages/vm-images/zarf.yaml)
-          uds zarf dev lint .
+          VERSION=$(yq -r '.metadata.version' zarf.yaml)
+          uds zarf dev lint . --set VM_IMAGE_TAG="$VERSION"
           uds zarf dev inspect manifests . \
+            --create-set VM_IMAGE_TAG="$VERSION" \
             --deploy-set-variables DOMAIN=example.test \
             --deploy-set-variables PROVIDER=kubevirt \
             >/dev/null
-          uds zarf dev lint packages/vm-images --set VERSION="$VERSION"
-          uds zarf dev inspect definition packages/vm-images --set VERSION="$VERSION" >/dev/null
-          uds zarf dev inspect manifests packages/vm-images --create-set VERSION="$VERSION" >/dev/null
 
   - name: wipe-k3s
     description: Uninstall k3s if present
@@ -358,7 +340,7 @@ tasks:
               exit 0
             fi
           fi
-          zarf package create . -f upstream --confirm --skip-sbom
+          zarf package create . -f upstream --confirm
         maxTotalSeconds: 3600
 
   - name: build-cdi
@@ -367,7 +349,7 @@ tasks:
       - description: Build CDI package
         cmd: |
           cd packages/cdi
-          zarf package create . --confirm --skip-sbom
+          zarf package create . --confirm
         maxTotalSeconds: 600
 
   - name: validate-cdi-crds
@@ -381,12 +363,12 @@ tasks:
             | kubectl apply --server-side --dry-run=server --field-manager=zarf -f -
         maxTotalSeconds: 120
 
-  - name: build-vm-images-package
+  - name: build-vm-images
     description: |
-      Build the lab-vm-images Zarf package from packer qcow2 outputs.
-      Wraps each qcow2 in a Python HTTP server image, then packages the
-      server workloads and CDI DataVolume manifests for cluster-local import.
+      Build VM image server container images from packer qcow2 outputs.
+      Images are tagged for ghcr.io and loaded into the local Docker daemon.
       Run uds run build-images first to produce the qcow2 files.
+      Push to registry with: uds run push-vm-images
     inputs:
       base_qcow2:
         description: Path to base qcow2 (combined base+tools image)
@@ -394,109 +376,91 @@ tasks:
       uds_core_qcow2:
         description: Path to uds-core qcow2
         default: packer/output/uds-core/lab-playground-uds-core.qcow2
-      skip:
-        description: Reuse existing VM image archives without rebuilding them
-        default: "0"
-      build:
-        description: Build the local VM-image package (1 = build)
-        default: "1"
+      tag:
+        description: Image tag (defaults to package version)
+        default: ""
     actions:
-      - description: Build OCI container images from qcow2 files and save as tarballs
+      - description: Build OCI container images from qcow2 files
         maxTotalSeconds: 600
         cmd: |
-          if [ "${{ .inputs.build }}" != "1" ]; then
-            echo "Skipping local VM image archive build"
-            exit 0
+          TAG="${{ .inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
           fi
-          if [ "${{ .inputs.skip }}" = "1" ]; then
-            for archive in packages/vm-images/base.tar packages/vm-images/uds-core.tar; do
-              [ -f "$archive" ] || { echo "ERROR: cannot reuse missing image archive: $archive"; exit 1; }
-            done
-            echo "Reusing existing VM image archives"
-            exit 0
-          fi
-          VERSION=$(grep '^  version:' packages/vm-images/zarf.yaml | head -1 | awk '{print $2}')
           build_image() {
-            local tag="$1" dockerfile="$2" context_dir="$3" tarname="$4"
+            local name="$1" dockerfile="$2" context_dir="$3"
             if [ ! -d "$context_dir" ] || [ -z "$(ls "$context_dir"/*.qcow2 2>/dev/null)" ]; then
-              echo "SKIP: no qcow2 in $context_dir — skipping $tag"
+              echo "SKIP: no qcow2 in $context_dir — skipping $name"
               return 0
             fi
-            echo "Building $tag from $context_dir..."
-            docker build -t "${tag}:${VERSION}" -f "$dockerfile" "$context_dir"
-            echo "Saving ${tag}:${VERSION} → packages/vm-images/${tarname}"
-            docker save "${tag}:${VERSION}" -o "packages/vm-images/${tarname}"
+            echo "Building ghcr.io/enxoco/lab-vm-images/${name}:${TAG}..."
+            docker build -t "ghcr.io/enxoco/lab-vm-images/${name}:${TAG}" -f "$dockerfile" "$context_dir"
           }
-          build_image zarf.internal/lab-vm-images/base     packages/vm-images/Dockerfile.base     "$(dirname "${{ .inputs.base_qcow2 }}")"     base.tar
-          build_image zarf.internal/lab-vm-images/uds-core packages/vm-images/Dockerfile.uds-core "$(dirname "${{ .inputs.uds_core_qcow2 }}")" uds-core.tar
-          for archive in packages/vm-images/base.tar packages/vm-images/uds-core.tar; do
-            [ -f "$archive" ] || { echo "ERROR: required image archive missing: $archive"; echo "Build qcow2 images first with: uds run build-images"; exit 1; }
-          done
-      - description: Build Zarf package
-        maxTotalSeconds: 3600
+          build_image base     packages/vm-images/Dockerfile.base     "$(dirname "${{ .inputs.base_qcow2 }}")"
+          build_image uds-core packages/vm-images/Dockerfile.uds-core "$(dirname "${{ .inputs.uds_core_qcow2 }}")"
+
+  - name: push-vm-images
+    description: Push VM image server container images to ghcr.io
+    inputs:
+      tag:
+        description: Image tag to push (defaults to package version)
+        default: ""
+    actions:
+      - description: Push VM images to registry
+        maxTotalSeconds: 600
         cmd: |
-          if [ "${{ .inputs.build }}" != "1" ]; then
-            echo "Skipping VM image package rebuild"
-            exit 0
+          TAG="${{ .inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
           fi
-          VERSION=$(grep '^  version:' packages/vm-images/zarf.yaml | head -1 | awk '{print $2}')
-          mkdir -p ~/.cache/zarf-tmp
-          cd packages/vm-images
-          zarf package create . --confirm --set VERSION="$VERSION" --skip-sbom --tmpdir ~/.cache/zarf-tmp
+          for name in base uds-core; do
+            echo "Pushing ghcr.io/enxoco/lab-vm-images/${name}:${TAG}..."
+            docker push "ghcr.io/enxoco/lab-vm-images/${name}:${TAG}"
+          done
 
   - name: build-image
-    description: Build and save the lab-platform Docker image with its package-owned name
+    description: Build the lab-platform Docker image tagged for ghcr.io
     actions:
       - description: Build Docker image
         cmd: |
           VERSION=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
-          docker build -t "zarf.internal/uds-lab-platform:${VERSION}" .
-          docker save "zarf.internal/uds-lab-platform:${VERSION}" -o lab-server.tar
+          docker build -t "ghcr.io/enxoco/uds-lab-platform:${VERSION}" .
+        maxTotalSeconds: 600
+
+  - name: push-image
+    description: Push the lab-platform Docker image to ghcr.io
+    actions:
+      - description: Push image to registry
+        cmd: |
+          VERSION=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
+          docker push "ghcr.io/enxoco/uds-lab-platform:${VERSION}"
         maxTotalSeconds: 600
 
   - name: build-lab-package
-    description: Build the uds-lab-platform Zarf package
+    description: Build the uds-lab-platform Zarf package (includes lab-server, vm-image-server, golden-pvcs)
+    inputs:
+      vm_image_tag:
+        description: VM image tag (defaults to package version)
+        default: ""
     actions:
       - description: Build Zarf package
         cmd: |
+          TAG="${{ .inputs.vm_image_tag }}"
+          if [ -z "$TAG" ]; then
+            TAG=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
+          fi
           mkdir -p ~/.cache/zarf-tmp
-          zarf package create . --confirm --skip-sbom --tmpdir ~/.cache/zarf-tmp
+          zarf package create . --confirm --set VM_IMAGE_TAG="$TAG" --tmpdir ~/.cache/zarf-tmp
         maxTotalSeconds: 600
 
   - name: build-bundle
     description: Build the UDS bundle from bundle/
-    inputs:
-      local_vm_images:
-        description: Use the local VM-image package instead of the registry package
-        default: "0"
     actions:
       - description: Create UDS bundle
         cmd: |
           BUNDLE_TMPDIR="${ZARF_TMPDIR:-$HOME/.cache/zarf-tmp}"
           mkdir -p "$BUNDLE_TMPDIR"
-          BUNDLE_DIR="bundle"
-          LOCAL_BUNDLE_DIR=".bundle-local"
-          cleanup() { rm -rf "$LOCAL_BUNDLE_DIR"; }
-          trap cleanup EXIT
-          if [ "${{ .inputs.local_vm_images }}" = "1" ]; then
-            for archive in packages/vm-images/base.tar packages/vm-images/uds-core.tar; do
-              [ -f "$archive" ] || {
-                echo "ERROR: local VM-image mode requires $archive" >&2
-                echo "Build the package first with 'uds run build-vm-images-package'" >&2
-                exit 1
-              }
-            done
-            rm -rf "$LOCAL_BUNDLE_DIR"
-            mkdir -p "$LOCAL_BUNDLE_DIR"
-            cp bundle/uds-bundle.yaml "$LOCAL_BUNDLE_DIR/uds-bundle.yaml"
-            yq -y -i '(.packages[] | select(.name == "lab-vm-images")) |= (.path = "../packages/vm-images" | del(.repository))' \
-              "$LOCAL_BUNDLE_DIR/uds-bundle.yaml"
-            BUNDLE_DIR="$LOCAL_BUNDLE_DIR"
-          fi
-          uds create "$BUNDLE_DIR" --confirm --tmpdir "$BUNDLE_TMPDIR"
-          if [ "$BUNDLE_DIR" != "bundle" ]; then
-            mv "$LOCAL_BUNDLE_DIR"/uds-bundle-*.tar.zst bundle/
-          fi
+          uds create bundle --confirm --tmpdir "$BUNDLE_TMPDIR"
         maxTotalSeconds: 600
 
   - name: clear-operator-crds
@@ -725,9 +689,9 @@ tasks:
       SKIP_UDS_CORE:
         description: Skip UDS Core image build
         default: "0"
-      LOCAL_VM_IMAGES:
-        description: Use local VM-image archives instead of the registry package
-        default: "0"
+      VM_IMAGE_TAG:
+        description: VM image tag (defaults to package version)
+        default: ""
     actions:
       - task: preflight
         with:
@@ -755,14 +719,11 @@ tasks:
           dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
           rebuild: ${{ .inputs.WIPE_CLUSTER }}
       - task: build-cdi
-      - task: build-vm-images-package
-        with:
-          build: ${{ .inputs.LOCAL_VM_IMAGES }}
       - task: build-image
       - task: build-lab-package
-      - task: build-bundle
         with:
-          local_vm_images: ${{ .inputs.LOCAL_VM_IMAGES }}
+          vm_image_tag: ${{ .inputs.VM_IMAGE_TAG }}
+      - task: build-bundle
       - task: deploy-bundle
       - task: wait-kubevirt
       - task: wait-cdi
@@ -837,9 +798,15 @@ tasks:
 
   - name: redeploy
     description: Rebuild and redeploy only lab-platform without touching infrastructure packages
+    inputs:
+      vm_image_tag:
+        description: VM image tag (defaults to package version)
+        default: ""
     actions:
       - task: build-image
       - task: build-lab-package
+        with:
+          vm_image_tag: ${{ .inputs.vm_image_tag }}
       - description: Deploy lab-platform package
         cmd: |
           PACKAGE=$(ls zarf-package-uds-lab-platform-amd64-*.tar.zst 2>/dev/null | tail -1)
@@ -974,10 +941,10 @@ tasks:
   #   uds run dev --with BUILD_IMAGES=1 --with WIPE_CLUSTER=0
 
   - name: dev
-    description: "Full e2e: use published VM images, set up cluster, deploy platform, configure access"
+    description: "Full e2e: set up cluster, deploy platform, configure access"
     inputs:
       BUILD_IMAGES:
-        description: Build local packer images (1 = build; default uses published VM package)
+        description: Build local packer images (1 = build; default uses published VM images from registry)
         default: "0"
       SKIP_BASE:
         description: Skip base image build
@@ -991,14 +958,13 @@ tasks:
       SKIP_GOLDEN_PVC:
         description: Force-skip host HTTP fallback (default 1 = use packaged image servers)
         default: "1"
-      LOCAL_VM_IMAGES:
-        description: Use local VM-image archives instead of the registry package
-        default: "0"
+      VM_IMAGE_TAG:
+        description: VM image tag (defaults to package version)
+        default: ""
     actions:
       - task: clean-artifacts
         with:
           clean: ${{ .inputs.WIPE_CLUSTER }}
-          keep_vm_images: ${{ .inputs.LOCAL_VM_IMAGES }}
       - task: cluster-up
         with:
           WIPE_CLUSTER: ${{ .inputs.WIPE_CLUSTER }}
@@ -1006,7 +972,7 @@ tasks:
           BUILD_IMAGES: ${{ .inputs.BUILD_IMAGES }}
           SKIP_BASE: ${{ .inputs.SKIP_BASE }}
           SKIP_UDS_CORE: ${{ .inputs.SKIP_UDS_CORE }}
-          LOCAL_VM_IMAGES: ${{ .inputs.LOCAL_VM_IMAGES }}
+          VM_IMAGE_TAG: ${{ .inputs.VM_IMAGE_TAG }}
       - task: patch-coredns
       - task: start-proxy
       - task: create-test-user

@@ -5,7 +5,7 @@ kind: ZarfPackageConfig
 metadata:
   name: lab-vm-images
   description: Lab playground VM images served to CDI from Zarf-managed Pods
-  version: 0.1.0
+  version: 0.2.0
 
 constants:
   - name: VM_IMAGE_VERSION
