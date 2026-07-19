@@ -1,4 +1,4 @@
-FROM python:3.15.0b3-alpine
+FROM python:3.14.6-alpine
 COPY lab-playground-uds-core.qcow2 /disk/
 
 USER 65532:65532
