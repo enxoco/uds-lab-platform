@@ -30,7 +30,6 @@ tasks:
           echo "Cleaning build artifacts..."
           rm -f zarf-package-*.tar.zst lab-server.tar uds-lab-platform-*.tar
           rm -f bundle/uds-bundle-*.tar.zst
-          rm -f packages/cdi/zarf-package-*.tar.zst
           rm -rf ~/.cache/zarf-tmp
           echo "Done."
 
@@ -90,6 +89,9 @@ tasks:
       kubevirt_pkg_dir:
         description: Path to local KubeVirt package directory
         default: $HOME/src/github.com/uds-packages/kubevirt
+      cdi_pkg_dir:
+        description: Path to local CDI operator package directory
+        default: ../cdi-operator
     actions:
       - description: Check tools, KVM, and KubeVirt dir
         cmd: |
@@ -99,6 +101,7 @@ tasks:
           done
           ls /dev/kvm >/dev/null 2>&1 || { echo "ERROR: /dev/kvm not found — enable KVM in BIOS (AMD-V / Intel VT-x)"; FAILED=1; }
           [ -d "${{ .inputs.kubevirt_pkg_dir }}" ] || { echo "ERROR: KubeVirt package dir not found: ${{ .inputs.kubevirt_pkg_dir }}"; FAILED=1; }
+          [ -d "${{ .inputs.cdi_pkg_dir }}" ] || { echo "ERROR: CDI package dir not found: ${{ .inputs.cdi_pkg_dir }}"; FAILED=1; }
           [ "$FAILED" = "0" ] || exit 1
       - task: validate-package-config
 
@@ -344,24 +347,19 @@ tasks:
         maxTotalSeconds: 3600
 
   - name: build-cdi
-    description: Build CDI Zarf package
+    description: Build the standalone CDI operator Zarf package
+    inputs:
+      dir:
+        description: Path to the CDI operator package directory
+        default: ../cdi-operator
     actions:
       - description: Build CDI package
         cmd: |
-          cd packages/cdi
-          zarf package create . --confirm
-        maxTotalSeconds: 600
-
-  - name: validate-cdi-crds
-    description: Server-side dry-run of CDI CRDs against the current cluster
-    actions:
-      - description: Check CDI CRD schema and field ownership
-        cmd: |
-          curl -fsSL \
-            https://github.com/kubevirt/containerized-data-importer/releases/download/v1.64.0/cdi-operator.yaml \
-            | yq 'select(.kind == "CustomResourceDefinition")' \
-            | kubectl apply --server-side --dry-run=server --field-manager=zarf -f -
-        maxTotalSeconds: 120
+          cd "${{ .inputs.dir }}"
+          uds run lint
+          uds run test-render
+          uds run build
+        maxTotalSeconds: 1200
 
   - name: build-vm-images
     description: |
@@ -370,6 +368,9 @@ tasks:
       Run uds run build-images first to produce the qcow2 files.
       Push to registry with: uds run push-vm-images
     inputs:
+      build:
+        description: Build local VM image-server containers (1 = build)
+        default: "1"
       base_qcow2:
         description: Path to base qcow2 (combined base+tools image)
         default: packer/output/base/lab-base.qcow2
@@ -383,6 +384,10 @@ tasks:
       - description: Build OCI container images from qcow2 files
         maxTotalSeconds: 600
         cmd: |
+          if [ "${{ .inputs.build }}" != "1" ]; then
+            echo "Skipping local VM image container builds"
+            exit 0
+          fi
           TAG="${{ .inputs.tag }}"
           if [ -z "$TAG" ]; then
             TAG=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
@@ -463,81 +468,9 @@ tasks:
           uds create bundle --confirm --tmpdir "$BUNDLE_TMPDIR"
         maxTotalSeconds: 600
 
-  - name: clear-operator-crds
-    description: |
-      Resolve CDI/KubeVirt Helm SSA field-manager conflicts on redeploy.
-      These operators claim .spec.versions on their own CRDs, conflicting with
-      Helm SSA on WIPE_CLUSTER=0 redeployments. Fix: delete the operator namespace
-      (stops the process) then force-adopt each CRD under the zarf field manager.
-      Golden PVCs and DataVolumes are preserved — no CRDs are deleted.
-      No-ops on a fresh cluster. Called automatically by deploy-bundle.
-    actions:
-      - description: Resolve CDI operator CRD conflict
-        maxTotalSeconds: 180
-        cmd: |
-          delete_operator_namespace() {
-            local ns="$1"
-            kubectl delete namespace "$ns" --ignore-not-found=true --wait=false
-            if kubectl wait --for=delete "namespace/$ns" --timeout=60s; then
-              return 0
-            fi
-            echo "Namespace $ns is stuck terminating; clearing namespace finalizers"
-            kubectl get namespace "$ns" -o json \
-              | jq '.spec.finalizers = []' \
-              | kubectl replace --raw "/api/v1/namespaces/$ns/finalize" -f -
-            kubectl wait --for=delete "namespace/$ns" --timeout=30s
-          }
-          MANAGERS=$(kubectl get crd cdis.cdi.kubevirt.io \
-            -o jsonpath='{.metadata.managedFields[*].manager}' 2>/dev/null || echo "")
-          if echo "$MANAGERS" | grep -q "cdi-operator"; then
-            echo "cdi-operator conflict detected — stopping operator and force-adopting CRDs"
-            delete_operator_namespace cdi
-            for crd in $(kubectl get crds 2>/dev/null | grep cdi.kubevirt.io | awk '{print $1}'); do
-              echo "Adopting CDI CRD $crd"
-              kubectl get crd "$crd" -o json | \
-                jq '{apiVersion, kind, metadata: {name: .metadata.name}, spec: {group: .spec.group, scope: .spec.scope, names: .spec.names, versions: .spec.versions}}' | \
-                kubectl apply --server-side --force-conflicts --field-manager=zarf -f -
-            done
-            echo "CDI field manager conflict resolved — golden PVCs preserved"
-          else
-            echo "No CDI operator conflict — skipping"
-          fi
-      - description: Resolve KubeVirt operator CRD conflict
-        maxTotalSeconds: 180
-        cmd: |
-          delete_operator_namespace() {
-            local ns="$1"
-            kubectl delete namespace "$ns" --ignore-not-found=true --wait=false
-            if kubectl wait --for=delete "namespace/$ns" --timeout=60s; then
-              return 0
-            fi
-            echo "Namespace $ns is stuck terminating; clearing namespace finalizers"
-            kubectl get namespace "$ns" -o json \
-              | jq '.spec.finalizers = []' \
-              | kubectl replace --raw "/api/v1/namespaces/$ns/finalize" -f -
-            kubectl wait --for=delete "namespace/$ns" --timeout=30s
-          }
-          MANAGERS=$(kubectl get crd kubevirts.kubevirt.io \
-            -o jsonpath='{.metadata.managedFields[*].manager}' 2>/dev/null || echo "")
-          if echo "$MANAGERS" | grep -q "virt-operator"; then
-            echo "virt-operator conflict detected — stopping operator and force-adopting CRDs"
-            delete_operator_namespace kubevirt
-            for crd in $(kubectl get crds 2>/dev/null | grep kubevirt.io | awk '{print $1}'); do
-              echo "Adopting KubeVirt CRD $crd"
-              kubectl get crd "$crd" -o json | \
-                jq '{apiVersion, kind, metadata: {name: .metadata.name}, spec: {group: .spec.group, scope: .spec.scope, names: .spec.names, versions: .spec.versions}}' | \
-                kubectl apply --server-side --force-conflicts --field-manager=zarf -f -
-            done
-            echo "KubeVirt field manager conflict resolved"
-          else
-            echo "No KubeVirt operator conflict — skipping"
-          fi
-
   - name: deploy-bundle
     description: Deploy the latest UDS bundle tarball from bundle/
     actions:
-      - task: validate-cdi-crds
-      - task: clear-operator-crds
       - description: Deploy bundle
         cmd: |
           BUNDLE=$(ls bundle/uds-bundle-uds-lab-platform-*.tar.zst 2>/dev/null | tail -1)
@@ -552,22 +485,6 @@ tasks:
       - description: Wait for KubeVirt Available
         cmd: kubectl -n kubevirt wait kubevirt kubevirt --for=condition=Available --timeout=300s
         maxTotalSeconds: 310
-
-  - name: wait-cdi
-    description: Wait for CDI to reach Deployed phase
-    actions:
-      - description: Poll CDI phase until Deployed
-        cmd: |
-          deadline=$(( $(date +%s) + 180 ))
-          while true; do
-            phase=$(kubectl get cdi cdi -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-            [ "$phase" = "Deployed" ] && { echo "CDI Deployed"; break; }
-            [ "$(date +%s)" -gt "$deadline" ] && { echo "ERROR: CDI not Deployed after 3m — check: kubectl get pods -n cdi"; exit 1; }
-            printf "."
-            sleep 3
-          done
-          echo ""
-        maxTotalSeconds: 190
 
   - name: patch-demo-routes
     description: |
@@ -680,6 +597,9 @@ tasks:
       KUBEVIRT_PKG_DIR:
         description: Path to local KubeVirt package directory
         default: $HOME/src/github.com/uds-packages/kubevirt
+      CDI_PKG_DIR:
+        description: Path to local CDI operator package directory
+        default: ../cdi-operator
       BUILD_IMAGES:
         description: Build local packer images (1 = build)
         default: "0"
@@ -692,10 +612,14 @@ tasks:
       VM_IMAGE_TAG:
         description: VM image tag (defaults to package version)
         default: ""
+      LOCAL_VM_IMAGES:
+        description: Build and embed local VM image-server containers instead of pulling published images
+        default: "0"
     actions:
       - task: preflight
         with:
           kubevirt_pkg_dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
+          cdi_pkg_dir: ${{ .inputs.CDI_PKG_DIR }}
       - task: wipe-k3s
         with:
           run: ${{ .inputs.WIPE_CLUSTER }}
@@ -708,7 +632,6 @@ tasks:
       - task: zarf-init
         with:
           run: ${{ .inputs.WIPE_CLUSTER }}
-      - task: validate-cdi-crds
       - task: build-images
         with:
           build: ${{ .inputs.BUILD_IMAGES }}
@@ -719,6 +642,12 @@ tasks:
           dir: ${{ .inputs.KUBEVIRT_PKG_DIR }}
           rebuild: ${{ .inputs.WIPE_CLUSTER }}
       - task: build-cdi
+        with:
+          dir: ${{ .inputs.CDI_PKG_DIR }}
+      - task: build-vm-images
+        with:
+          build: ${{ .inputs.LOCAL_VM_IMAGES }}
+          tag: ${{ .inputs.VM_IMAGE_TAG }}
       - task: build-image
       - task: build-lab-package
         with:
@@ -726,7 +655,6 @@ tasks:
       - task: build-bundle
       - task: deploy-bundle
       - task: wait-kubevirt
-      - task: wait-cdi
       - task: patch-demo-routes
       - task: populate-golden-pvcs
         with:
@@ -936,9 +864,10 @@ tasks:
   #
   # Common invocations:
   #   uds run dev                              # use published VM package, wipe cluster
-  #   uds run dev --with BUILD_IMAGES=1        # build local packer images first
+  #   uds run dev --with BUILD_IMAGES=1 --with LOCAL_VM_IMAGES=1
+  #                                            # build and package local VM images
   #   uds run dev --with WIPE_CLUSTER=0        # keep k3s, redeploy packages
-  #   uds run dev --with BUILD_IMAGES=1 --with WIPE_CLUSTER=0
+  #   uds run dev --with LOCAL_VM_IMAGES=1 --with WIPE_CLUSTER=0
 
   - name: dev
     description: "Full e2e: set up cluster, deploy platform, configure access"
@@ -961,6 +890,9 @@ tasks:
       VM_IMAGE_TAG:
         description: VM image tag (defaults to package version)
         default: ""
+      LOCAL_VM_IMAGES:
+        description: Build and embed local VM image-server containers instead of pulling published images
+        default: "0"
     actions:
       - task: clean-artifacts
         with:
@@ -973,6 +905,7 @@ tasks:
           SKIP_BASE: ${{ .inputs.SKIP_BASE }}
           SKIP_UDS_CORE: ${{ .inputs.SKIP_UDS_CORE }}
           VM_IMAGE_TAG: ${{ .inputs.VM_IMAGE_TAG }}
+          LOCAL_VM_IMAGES: ${{ .inputs.LOCAL_VM_IMAGES }}
       - task: patch-coredns
       - task: start-proxy
       - task: create-test-user

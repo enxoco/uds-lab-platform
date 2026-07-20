@@ -279,7 +279,7 @@ internal/
     kubevirt/   # KubeVirt provider: VMI + DataVolume + Service + NetworkPolicy
   session/      # session manager, session state
 packer/         # QEMU packer builds for each VM tier
-packages/cdi/   # CDI (Containerized Data Importer) Zarf package
+../cdi-operator/ # Standalone CDI infrastructure Zarf package used by local dev
 chart/          # Helm chart for lab-platform deployment
 scripts/        # dev workflow scripts
 vm/             # user-data.sh.gotmpl — cloud-init for lab VMs

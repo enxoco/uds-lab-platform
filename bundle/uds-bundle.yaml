@@ -77,8 +77,15 @@ packages:
                 - uds-lab-vms
 
   - name: cdi
-    path: ../packages/cdi
-    ref: v1.64.0
+    path: ../../cdi-operator
+    ref: 1.64.0-uds.0
+    overrides:
+      cdi-uds-policy:
+        cdi-uds-config:
+          values:
+            - path: workloadNamespaces
+              value:
+                - uds-lab-vms
 
   - name: uds-lab-platform
     path: ../
