@@ -1,0 +1,26 @@
+tasks:
+  - name: build-all
+    description: Build lab-platform and VM image server containers (no qcow2 needed for VM images — uses existing base layer)
+    actions:
+      - description: Build lab-platform image
+        cmd: |
+          VERSION=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
+          echo "Building ghcr.io/enxoco/uds-lab-platform:${VERSION}..."
+          docker build -t "ghcr.io/enxoco/uds-lab-platform:${VERSION}" .
+        maxTotalSeconds: 600
+
+  - name: push-all
+    description: Push lab-platform and VM image server containers to ghcr.io
+    actions:
+      - description: Push lab-platform image
+        cmd: |
+          VERSION=$(grep '^  version:' zarf.yaml | head -1 | awk '{print $2}')
+          echo "Pushing ghcr.io/enxoco/uds-lab-platform:${VERSION}..."
+          docker push "ghcr.io/enxoco/uds-lab-platform:${VERSION}"
+        maxTotalSeconds: 600
+
+  - name: build-and-push
+    description: Build then push all images to ghcr.io
+    actions:
+      - task: build-all
+      - task: push-all

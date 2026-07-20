@@ -8,7 +8,7 @@ kind: UDSBundle
 metadata:
   name: uds-lab-platform
   description: UDS Lab Platform — interactive ISV packaging labs
-  version: "0.3.0"
+  version: "0.4.0"
 
 packages:
   - name: core-base
@@ -89,4 +89,4 @@ packages:
 
   - name: uds-lab-platform
     path: ../
-    ref: "0.3.0"
+    ref: "0.4.0"

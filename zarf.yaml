@@ -5,7 +5,7 @@ kind: ZarfPackageConfig
 metadata:
   name: uds-lab-platform
   description: Lab server and operator — CRD, Deployments, RBAC.  KubeVirt/CDI/UDS Core are in the bundle.
-  version: 0.3.0
+  version: 0.4.0
 
 constants:
   - name: VM_IMAGE_TAG
@@ -35,7 +35,7 @@ components:
     charts:
       - name: lab-platform
         localPath: chart
-        version: 0.3.0
+        version: 0.4.0
         namespace: lab-platform
         variables:
           - name: DOMAIN
@@ -45,7 +45,7 @@ components:
             description: Provider backend (kubevirt or pod)
             path: provider
     images:
-      - ghcr.io/enxoco/uds-lab-platform:0.3.0
+      - ghcr.io/enxoco/uds-lab-platform:0.4.0
 
   - name: vm-image-server
     required: true

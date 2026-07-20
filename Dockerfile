@@ -17,5 +17,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /lab-operator ./cmd/laboperator
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /lab-server /lab-server
 COPY --from=build /lab-operator /lab-operator
+USER 65532:65532
 EXPOSE 8080
 CMD ["/lab-server"]
