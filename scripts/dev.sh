@@ -15,6 +15,7 @@ cd "$(dirname "$0")/.."
 
 exec uds run dev \
   --with BUILD_IMAGES="${BUILD_IMAGES:-0}" \
+  --with CDI_FLAVOR="${CDI_FLAVOR:-unicorn}" \
   --with WIPE_CLUSTER="${WIPE_CLUSTER:-1}" \
   --with SKIP_BASE="${SKIP_BASE:-0}" \
   --with SKIP_UDS_CORE="${SKIP_UDS_CORE:-0}" \

@@ -55,17 +55,23 @@ every user an isolated copy of the full disk image.
 ### Full e2e from scratch
 
 ```bash
-uds run dev
+uds run dev --with CDI_FLAVOR=unicorn
 ```
 
 This will:
 1. Generate a packer SSH keypair (if missing)
-2. Wipe and reinstall k3s (MetalLB + KubeVirt + CDI + UDS Core)
-3. Build and deploy the lab-platform Docker image
-4. Deploy the versioned VM-image package from the UDS Army registry
-5. Patch CoreDNS to route `*.uds.dev` to MetalLB gateways
-6. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
-7. Start the nginx SNI proxy for external access
+2. Build and stage the local unicorn CDI package
+3. Wipe and reinstall k3s (MetalLB + KubeVirt + CDI + UDS Core)
+4. Build and deploy the lab-platform Docker image
+5. Deploy the versioned VM-image package from the UDS Army registry
+6. Patch CoreDNS to route `*.uds.dev` to MetalLB gateways
+7. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
+8. Start the nginx SNI proxy for external access
+
+`unicorn` is the default for the full E2E workflow. Use
+`--with CDI_FLAVOR=upstream` to test the upstream CDI images instead. Building
+the unicorn flavor requires authentication to the Defense Unicorns Chainguard
+registry.
 
 ### Build local VM images instead of using the published package
 

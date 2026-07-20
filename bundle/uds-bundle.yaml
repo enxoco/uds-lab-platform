@@ -78,7 +78,7 @@ packages:
 
   - name: cdi
     path: ../../cdi-operator
-    ref: 1.64.0-uds.0
+    ref: dev
     overrides:
       cdi-uds-policy:
         cdi-uds-config:
