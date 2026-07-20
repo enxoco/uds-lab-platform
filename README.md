@@ -46,6 +46,11 @@ every user an isolated copy of the full disk image.
 - `uds`, `zarf`, `kubectl`, `docker`, `jq`, `ip`, `curl`
 - [virtctl](https://kubevirt.io/user-guide/user_workloads/virtctl_client_tool/) (for VM console/SSH access)
 - KubeVirt package repo at `~/src/github.com/uds-packages/kubevirt`
+- Standalone `cdi-operator` repo cloned beside this repository at
+  `../cdi-operator`. Until `enxoco/cdi-operator#4` lands, check out
+  `feat/uds-common-ci-unicorn`. The local bundle currently resolves this fixed
+  sibling path; generalized `CDI_PKG_DIR` bundle resolution remains follow-up
+  work while the CDI integration is in flight.
 
 **First-time only:**
 - Internet access (pulls Ubuntu cloud image, packages, UDS Core bundle)
