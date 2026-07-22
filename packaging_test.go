@@ -230,6 +230,9 @@ func TestVMImageComponentsInMainPackage(t *testing.T) {
 		t.Fatal(err)
 	}
 	dvText := string(dataVolumes)
+	if count := strings.Count(dvText, `cdi.kubevirt.io/storage.bind.immediate.requested: "true"`); count != 2 {
+		t.Fatalf("both golden DataVolumes must request immediate binding, got %d annotations", count)
+	}
 	for _, forbidden := range []string{"source:\n    registry:", "secretRef:", "ZARF_REGISTRY", "CDI_REGISTRY", "zarf-docker-registry"} {
 		if strings.Contains(dvText, forbidden) {
 			t.Fatalf("DataVolumes must not contain registry wiring %q", forbidden)

@@ -46,11 +46,19 @@ every user an isolated copy of the full disk image.
 - `uds`, `zarf`, `kubectl`, `docker`, `jq`, `ip`, `curl`
 - [virtctl](https://kubevirt.io/user-guide/user_workloads/virtctl_client_tool/) (for VM console/SSH access)
 - KubeVirt package repo at `~/src/github.com/uds-packages/kubevirt`
-- Standalone `cdi-operator` repo cloned beside this repository at
-  `../cdi-operator`. Until `enxoco/cdi-operator#4` lands, check out
-  `feat/uds-common-ci-unicorn`. The local bundle currently resolves this fixed
-  sibling path; generalized `CDI_PKG_DIR` bundle resolution remains follow-up
-  work while the CDI integration is in flight.
+- Containerized Data Importer package repo at
+  `~/src/github.com/uds-packages/containerized-data-importer`. Until the stacked
+  Unicorn flavor PR merges, check out
+  `feat/add-unicorn-flavor-update-dependencies`:
+
+  ```bash
+  git clone git@github.com:uds-packages/containerized-data-importer.git \
+    ~/src/github.com/uds-packages/containerized-data-importer
+  git -C ~/src/github.com/uds-packages/containerized-data-importer switch \
+    feat/add-unicorn-flavor-update-dependencies
+  ```
+
+  `CDI_PKG_DIR` can override this default checkout location.
 
 **First-time only:**
 - Internet access (pulls Ubuntu cloud image, packages, UDS Core bundle)
@@ -73,10 +81,9 @@ This will:
 7. Create a test Keycloak user (`doug@uds.dev / unicorn123!@#UN`)
 8. Start the nginx SNI proxy for external access
 
-`unicorn` is the default for the full E2E workflow. Use
-`--with CDI_FLAVOR=upstream` to test the upstream CDI images instead. Building
-the unicorn flavor requires authentication to the Defense Unicorns Chainguard
-registry.
+The workflow defaults to `upstream`; the command above explicitly selects the
+local `unicorn` flavor. Building the Unicorn flavor requires authentication to
+the Defense Unicorns Chainguard registry.
 
 ### Build local VM images instead of using the published package
 
@@ -290,11 +297,13 @@ internal/
     kubevirt/   # KubeVirt provider: VMI + DataVolume + Service + NetworkPolicy
   session/      # session manager, session state
 packer/         # QEMU packer builds for each VM tier
-../cdi-operator/ # Standalone CDI infrastructure Zarf package used by local dev
 chart/          # Helm chart for lab-platform deployment
 scripts/        # dev workflow scripts
 vm/             # user-data.sh.gotmpl — cloud-init for lab VMs
 scenarios/      # lab scenario definitions
+
+~/src/github.com/uds-packages/
+  containerized-data-importer/ # External CDI package checkout used by dev
 ```
 
 ### Release process

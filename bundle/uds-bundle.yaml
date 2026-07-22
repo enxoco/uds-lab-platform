@@ -77,11 +77,11 @@ packages:
                 - uds-lab-vms
 
   - name: cdi
-    path: ../../cdi-operator
+    path: ../
     ref: dev
     overrides:
-      cdi-uds-policy:
-        cdi-uds-config:
+      cdi:
+        uds-cdi-config:
           values:
             - path: workloadNamespaces
               value:

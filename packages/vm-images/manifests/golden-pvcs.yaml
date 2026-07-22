@@ -6,6 +6,8 @@ kind: DataVolume
 metadata:
   name: golden-base
   namespace: uds-lab-vms
+  annotations:
+    cdi.kubevirt.io/storage.bind.immediate.requested: "true"
   labels:
     lab.uds.dev/golden-pvc: "true"
     lab.uds.dev/tier: base
@@ -25,6 +27,8 @@ kind: DataVolume
 metadata:
   name: golden-uds-core
   namespace: uds-lab-vms
+  annotations:
+    cdi.kubevirt.io/storage.bind.immediate.requested: "true"
   labels:
     lab.uds.dev/golden-pvc: "true"
     lab.uds.dev/tier: uds-core
