@@ -91,7 +91,7 @@ tasks:
         default: $HOME/src/github.com/uds-packages/kubevirt
       cdi_pkg_dir:
         description: Path to local CDI operator package directory
-        default: ../cdi-operator
+        default: $HOME/src/github.com/uds-packages/containerized-data-importer
     actions:
       - description: Check tools, KVM, and KubeVirt dir
         cmd: |
@@ -351,7 +351,7 @@ tasks:
     inputs:
       dir:
         description: Path to the CDI operator package directory
-        default: ../cdi-operator
+        default: $HOME/src/github.com/uds-packages/containerized-data-importer
       flavor:
         description: CDI package flavor
         default: upstream
@@ -359,11 +359,13 @@ tasks:
       - description: Build CDI package
         cmd: |
           set -euo pipefail
+          OUTPUT_DIR="$PWD"
           cd "${{ .inputs.dir }}"
 
           FLAVOR="${{ .inputs.flavor }}"
-          uds run lint
+          uds run lint:all
           uds run test-render
+          uds run test-ownership
           uds run build --set FLAVOR="$FLAVOR"
 
           PACKAGE=$(find . -maxdepth 1 \
@@ -376,8 +378,9 @@ tasks:
 
           SUFFIX="-${FLAVOR}.tar.zst"
           TARGET="${PACKAGE%"$SUFFIX"}.tar.zst"
-          cp "$PACKAGE" "$TARGET"
-          echo "Staged $TARGET for the local bundle"
+          TARGET_NAME=$(basename "$TARGET")
+          cp "$PACKAGE" "$OUTPUT_DIR/$TARGET_NAME"
+          echo "Staged $OUTPUT_DIR/$TARGET_NAME for the local bundle"
         maxTotalSeconds: 1200
 
   - name: build-vm-images
@@ -618,10 +621,10 @@ tasks:
         default: $HOME/src/github.com/uds-packages/kubevirt
       CDI_PKG_DIR:
         description: Path to local CDI operator package directory
-        default: ../cdi-operator
+        default: $HOME/src/github.com/uds-packages/containerized-data-importer
       CDI_FLAVOR:
         description: Locally built CDI package flavor
-        default: unicorn
+        default: upstream
       BUILD_IMAGES:
         description: Build local packer images (1 = build)
         default: "0"
@@ -886,7 +889,7 @@ tasks:
   # Composes: build-images + cluster-up + patch-coredns + start-proxy + test user.
   #
   # Common invocations:
-  #   uds run dev                              # use unicorn CDI and published VM package
+  #   uds run dev                              # use upstream CDI and published VM package
   #   uds run dev --with BUILD_IMAGES=1 --with LOCAL_VM_IMAGES=1
   #                                            # build and package local VM images
   #   uds run dev --with WIPE_CLUSTER=0        # keep k3s, redeploy packages
@@ -916,9 +919,12 @@ tasks:
       LOCAL_VM_IMAGES:
         description: Build and embed local VM image-server containers instead of pulling published images
         default: "0"
+      CDI_PKG_DIR:
+        description: Path to local CDI package source
+        default: $HOME/src/github.com/uds-packages/containerized-data-importer
       CDI_FLAVOR:
         description: Locally built CDI package flavor
-        default: unicorn
+        default: upstream
     actions:
       - task: clean-artifacts
         with:
@@ -932,6 +938,7 @@ tasks:
           SKIP_UDS_CORE: ${{ .inputs.SKIP_UDS_CORE }}
           VM_IMAGE_TAG: ${{ .inputs.VM_IMAGE_TAG }}
           LOCAL_VM_IMAGES: ${{ .inputs.LOCAL_VM_IMAGES }}
+          CDI_PKG_DIR: ${{ .inputs.CDI_PKG_DIR }}
           CDI_FLAVOR: ${{ .inputs.CDI_FLAVOR }}
       - task: patch-coredns
       - task: start-proxy
